@@ -6,10 +6,9 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 
-# Cryptography (pyumbral is optional - we use fallback if not available)
+# Cryptography
 cryptography>=41.0.0
-# Note: pyumbral may not be available on all platforms
-# Install manually if needed: pip install umbral
+umbral>=0.3.0  # pyUmbral for proxy re-encryption
 
 # JWT Authentication
 python-jose[cryptography]>=3.3.0
