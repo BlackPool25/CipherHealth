@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { seedInvite, register } from '@/lib/api';
+import { seedInvite, register, seedLogin } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface SeedLoginModalProps {
@@ -47,6 +47,39 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
     setIsLoading(false);
   };
 
+  const handleQuickLogin = async () => {
+    if (!inviteCode) {
+      setError('Please enter an invite code');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    // Try seed-login first (for existing codes)
+    const result = await seedLogin(inviteCode);
+
+    if (result.error) {
+      // If login fails, code might be new - show register form
+      setError('');
+      setStep('register');
+      setIsLoading(false);
+      return;
+    }
+
+    if (result.data) {
+      // Login successful - save token and user
+      login(result.data.user, result.data.access_token);
+      setStep('success');
+      
+      setTimeout(() => {
+        onClose();
+        router.push('/dashboard');
+      }, 1500);
+    }
+    setIsLoading(false);
+  };
+
   const handleRegister = async () => {
     if (!username || !email) {
       setError('Please fill in all fields');
@@ -69,10 +102,8 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
     }
 
     if (result.data) {
-      // For demo purposes, we'll create a mock token
-      // In production, this would come from the backend
-      const mockToken = `demo_token_${Date.now()}`;
-      login(result.data.user, mockToken);
+      // Use the real token from backend
+      login(result.data.user, result.data.access_token);
       setStep('success');
       
       setTimeout(() => {
@@ -88,8 +119,8 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
       setError('Please enter an invite code');
       return;
     }
-    setStep('register');
-    setError('');
+    // Try quick login first
+    handleQuickLogin();
   };
 
   if (!isOpen) return null;

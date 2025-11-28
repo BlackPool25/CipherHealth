@@ -291,6 +291,15 @@ async def get_file_by_cid(cid: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+async def get_file_by_id(file_id: int) -> Optional[dict]:
+    """Get a file record by ID."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM files WHERE id = ?", (file_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_files_by_owner(owner_id: int) -> list[dict]:
     """Get all files owned by a user."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
