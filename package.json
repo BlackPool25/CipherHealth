@@ -1,0 +1,17 @@
+{
+  "name": "decent-hospital",
+  "version": "0.1.0",
+  "description": "Decentralized healthcare prototype monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter backend dev\" \"pnpm --filter frontend dev\"",
+    "start": "concurrently \"pnpm --filter backend start\" \"pnpm --filter frontend start\"",
+    "deploy-contract": "pnpm --filter contracts deploy --network sepolia"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

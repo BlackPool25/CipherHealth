@@ -1,0 +1,3 @@
+# Placeholder to ensure keys directory exists
+# Actual key files should be generated and NEVER committed
+*.bin
