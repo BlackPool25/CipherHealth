@@ -236,6 +236,59 @@ def get_signer(w3: "Web3"):
 # Chain Interaction Functions
 # ============================================================================
 
+async def set_record_onchain(cid: str) -> str:
+    """
+    Record a file CID on-chain using setRecord.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        
+    Returns:
+        Transaction hash
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If transaction fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError(
+            "Chain not configured. Set SEPOLIA_RPC_URL, "
+            "HEALTH_RECORDS_CONTRACT_ADDRESS, and SIGNER_PRIVATE_KEY."
+        )
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract(w3)
+        signer = get_signer(w3)
+        
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.setRecord(cid).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        # Sign and send
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        # Wait for receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return tx_hash.hex()
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to set record on-chain: {str(e)}")
+
+
 async def record_grant_onchain(
     cid: str,
     grantee_pubkey: str,

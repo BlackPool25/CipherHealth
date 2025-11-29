@@ -65,9 +65,10 @@ class SeedLoginResponse(BaseModel):
 
 
 class SeedInviteRequest(BaseModel):
-    """Request to seed an invite code (dev only)."""
+    """Request to seed an invite code (dev only or with admin password)."""
 
     code: Optional[str] = None
+    admin_password: Optional[str] = None  # Required in production mode
 
 
 class SeedInviteResponse(BaseModel):
@@ -290,26 +291,33 @@ async def seed_login(request: SeedLoginRequest):
 @router.post("/seed-invite", response_model=SeedInviteResponse)
 async def seed_invite(request: SeedInviteRequest):
     """
-    Seed a single invite code (development only).
+    Seed a single invite code.
     
-    This endpoint is only available when DEV_MODE=true.
+    In development mode (DEV_MODE=true), no password required.
+    In production mode, requires admin_password to generate codes.
     
     Args:
-        request: Optional invite code. If not provided, generates random code.
+        request: Optional invite code and admin password.
         
     Returns:
         The created invite code.
         
     Raises:
-        HTTPException 403: If not in dev mode.
+        HTTPException 403: If not in dev mode and password incorrect.
         HTTPException 409: If invite code already exists.
     """
     dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
+    
+    # Admin password for production invite generation
+    ADMIN_PASSWORD = os.getenv("ADMIN_INVITE_PASSWORD", "%bWvcjE5X66dZuyTUtQt")
+    
     if not dev_mode:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This endpoint is only available in development mode",
-        )
+        # In production, require admin password
+        if not request.admin_password or request.admin_password != ADMIN_PASSWORD:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin password required to generate invite codes in production",
+            )
     
     code = request.code or secrets.token_urlsafe(16)
     

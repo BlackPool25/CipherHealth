@@ -138,6 +138,16 @@ async def debug_storacha():
     return results
 
 
+@app.get("/debug/chain-status")
+async def debug_chain_status():
+    """Debug endpoint to check chain configuration status."""
+    try:
+        from app.utils.chain import get_chain_status
+        return get_chain_status()
+    except Exception as e:
+        return {"error": str(e), "fully_configured": False}
+
+
 if __name__ == "__main__":
     import uvicorn
 

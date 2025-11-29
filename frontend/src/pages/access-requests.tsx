@@ -30,6 +30,7 @@ import {
   listGrants,
   createGrant,
   revokeGrant,
+  getGrantsForGrantee,
 } from '@/lib/api';
 import {
   initUmbral,
@@ -75,7 +76,7 @@ interface ApprovedGrant {
   is_expired: boolean;
 }
 
-type TabType = 'grant' | 'mygrants' | 'pending' | 'request' | 'redeem' | 'records' | 'keys';
+type TabType = 'grant' | 'mygrants' | 'granted-to-me' | 'pending' | 'request' | 'redeem' | 'records' | 'keys';
 
 interface FileRecord {
   id: number;
@@ -93,6 +94,18 @@ interface Grant {
   created_at: string;
 }
 
+interface GrantedFile {
+  id: number;
+  file_id: number;
+  filename: string;
+  cid: string;
+  granter_id: number;
+  granter_username: string;
+  status: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
 export default function AccessRequestsPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -102,6 +115,7 @@ export default function AccessRequestsPage() {
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
   const [myRecords, setMyRecords] = useState<PatientRecord[]>([]);
   const [myGrants, setMyGrants] = useState<ApprovedGrant[]>([]);
+  const [grantedToMe, setGrantedToMe] = useState<GrantedFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
   // Grant Access state
@@ -176,6 +190,27 @@ export default function AccessRequestsPage() {
     }
   }, [authLoading, isAuthenticated, router]);
 
+  // Handle URL query params for tab and fileId
+  useEffect(() => {
+    const { tab, fileId } = router.query;
+    
+    // Set active tab from URL
+    if (tab && typeof tab === 'string') {
+      const validTabs: TabType[] = ['grant', 'mygrants', 'granted-to-me', 'pending', 'request', 'redeem', 'records', 'keys'];
+      if (validTabs.includes(tab as TabType)) {
+        setActiveTab(tab as TabType);
+      }
+    }
+    
+    // Pre-select file if fileId is provided
+    if (fileId && typeof fileId === 'string') {
+      const id = parseInt(fileId);
+      if (!isNaN(id)) {
+        setSelectedFileId(id);
+      }
+    }
+  }, [router.query]);
+
   useEffect(() => {
     if (user?.id) {
       loadData();
@@ -207,6 +242,11 @@ export default function AccessRequestsPage() {
         const result = await getMyGrants();
         if (result.data) {
           setMyGrants(result.data.grants || []);
+        }
+      } else if (activeTab === 'granted-to-me') {
+        const result = await getGrantsForGrantee(user.id);
+        if (result.data) {
+          setGrantedToMe(result.data.grants || []);
         }
       } else if (activeTab === 'records') {
         const result = await getPatientRecords(user.id);
@@ -512,13 +552,25 @@ export default function AccessRequestsPage() {
       const nonce = encryptedBlob.slice(0, 12);
       const ciphertext = encryptedBlob.slice(12);
       
+      // IMPORTANT: Create a proper ArrayBuffer copy - Uint8Array.buffer might be a view of a larger buffer
+      const cekBuffer = new Uint8Array(decryptedCek).buffer;
+      console.log('CEK buffer size:', cekBuffer.byteLength, 'Expected: 32');
+      
+      if (cekBuffer.byteLength !== 32) {
+        throw new Error(`Invalid CEK size: ${cekBuffer.byteLength} bytes (expected 32 for AES-256)`);
+      }
+      
       const key = await crypto.subtle.importKey(
         'raw',
-        decryptedCek.buffer as ArrayBuffer,
+        cekBuffer,
         { name: 'AES-GCM' },
         false,
         ['decrypt']
       );
+      
+      console.log('AES key imported successfully');
+      console.log('Nonce (first 12 bytes):', Array.from(nonce.slice(0, 12)).map(b => b.toString(16).padStart(2, '0')).join(''));
+      console.log('Ciphertext size:', ciphertext.length);
       
       const decryptedContent = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv: nonce },
@@ -584,7 +636,10 @@ export default function AccessRequestsPage() {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
         </div>
       </Layout>
     );
@@ -598,10 +653,17 @@ export default function AccessRequestsPage() {
     <Layout>
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Access Management</h1>
-        <p className="mt-1 text-gray-600">
-          Manage access requests for encrypted health records
-        </p>
+        <div className="flex items-center gap-4">
+          <div className="icon-box icon-box-purple">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Access Management</h1>
+            <p className="text-gray-500">Manage access requests for encrypted health records</p>
+          </div>
+        </div>
       </div>
 
       {/* Last Transaction */}
@@ -612,107 +674,61 @@ export default function AccessRequestsPage() {
       )}
 
       {/* Tabs */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('grant')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'grant'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Grant Access
-          </button>
-          <button
-            onClick={() => setActiveTab('mygrants')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'mygrants'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            My Grants
-          </button>
-          <button
-            onClick={() => setActiveTab('pending')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'pending'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Pending Requests
-          </button>
-          <button
-            onClick={() => setActiveTab('request')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-              activeTab === 'request'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Request Access
-          </button>
-          <button
-            onClick={() => setActiveTab('redeem')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'redeem'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Redeem Access
-          </button>
-          <button
-            onClick={() => setActiveTab('records')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'records'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            My Records
-          </button>
-          <button
-            onClick={() => setActiveTab('keys')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'keys'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            🔑 Keys {!hasKeys && <span className="text-red-500">!</span>}
-          </button>
+      <div className="glass-card p-2 mb-6">
+        <nav className="flex space-x-2 overflow-x-auto">
+          {[
+            { id: 'grant', label: 'Grant Access', icon: '🔑' },
+            { id: 'mygrants', label: 'My Grants', icon: '📋' },
+            { id: 'granted-to-me', label: 'Shared With Me', icon: '📥' },
+            { id: 'pending', label: 'Pending', icon: '⏳' },
+            { id: 'request', label: 'Request', icon: '📨' },
+            { id: 'redeem', label: 'Redeem', icon: '🎁' },
+            { id: 'records', label: 'Records', icon: '📁' },
+            { id: 'keys', label: 'Keys', icon: '🔐' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as TabType)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 whitespace-nowrap transition-all ${
+                activeTab === tab.id
+                  ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <span>{tab.icon}</span>
+              {tab.label}
+              {tab.id === 'keys' && !hasKeys && <span className="text-red-400 text-xs">!</span>}
+            </button>
+          ))}
         </nav>
       </div>
 
       {/* Tab Content */}
-      <div className="bg-white rounded-xl shadow-sm border">
+      <div className="glass-card overflow-hidden">
         {/* Grant Access Tab */}
         {activeTab === 'grant' && (
           <div>
-            <div className="px-6 py-4 border-b bg-gray-50">
+            <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
               <h2 className="text-lg font-semibold text-gray-900">
                 Grant Access
               </h2>
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-gray-500">
                 Share your health records with healthcare providers
               </p>
             </div>
 
             <div className="p-6">
               {/* Create Grant Form */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-6 mb-6">
                 <h3 className="text-md font-semibold text-gray-900 mb-4">Create New Grant</h3>
                 
                 {grantError && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
                     {grantError}
                   </div>
                 )}
                 {grantSuccess && (
-                  <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+                  <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-sm">
                     {grantSuccess}
                   </div>
                 )}
@@ -725,7 +741,7 @@ export default function AccessRequestsPage() {
                     <select
                       value={selectedFileId || ''}
                       onChange={(e) => setSelectedFileId(parseInt(e.target.value) || null)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="input-dark w-full"
                     >
                       <option value="">Choose a file...</option>
                       {myFiles.map((file) => (
@@ -745,7 +761,7 @@ export default function AccessRequestsPage() {
                       value={granteeId}
                       onChange={(e) => setGranteeId(e.target.value)}
                       placeholder="User ID to share with"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="input-dark w-full"
                     />
                   </div>
                   
@@ -753,10 +769,10 @@ export default function AccessRequestsPage() {
                     <button
                       onClick={handleCreateGrant}
                       disabled={isCreatingGrant || !selectedFileId || !granteeId || !isConnected || !isCorrectNetwork}
-                      className={`w-full px-4 py-2 rounded-md font-medium transition-colors ${
+                      className={`w-full btn-neon ${
                         isCreatingGrant || !selectedFileId || !granteeId || !isConnected || !isCorrectNetwork
-                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                          ? 'opacity-50 cursor-not-allowed'
+                          : ''
                       }`}
                     >
                       {isCreatingGrant ? 'Creating...' : 'Create Grant'}
@@ -765,7 +781,7 @@ export default function AccessRequestsPage() {
                 </div>
                 
                 {(!isConnected || !isCorrectNetwork) && (
-                  <p className="mt-2 text-sm text-yellow-600">
+                  <p className="mt-2 text-sm text-amber-600">
                     ⚠️ Connect wallet to Sepolia network to create grants
                   </p>
                 )}
@@ -776,7 +792,10 @@ export default function AccessRequestsPage() {
               
               {isLoading ? (
                 <div className="flex items-center justify-center h-24">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  <div className="relative">
+                    <div className="w-8 h-8 border-4 border-indigo-100 rounded-full"></div>
+                    <div className="absolute top-0 left-0 w-8 h-8 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+                  </div>
                 </div>
               ) : existingGrants.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -785,10 +804,10 @@ export default function AccessRequestsPage() {
               ) : (
                 <div className="space-y-3">
                   {existingGrants.map((grant) => (
-                    <div key={grant.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                    <div key={grant.id} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors">
                       <div className="flex items-center space-x-4">
-                        <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="icon-box icon-box-indigo w-10 h-10">
+                          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                           </svg>
                         </div>
@@ -999,6 +1018,94 @@ export default function AccessRequestsPage() {
           </div>
         )}
 
+        {/* Shared With Me Tab */}
+        {activeTab === 'granted-to-me' && (
+          <div>
+            <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-green-50 to-teal-50">
+              <h2 className="text-lg font-semibold text-gray-900">
+                📥 Shared With Me
+              </h2>
+              <p className="text-sm text-gray-500">
+                Files that others have shared with you
+              </p>
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div>
+              </div>
+            ) : grantedToMe.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+                <p className="mt-4">No files have been shared with you yet</p>
+                <p className="text-sm mt-2">When someone grants you access to their files, they'll appear here</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {grantedToMe.map((grant) => (
+                  <div key={grant.id} className="p-6 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${
+                            grant.status === 'active' 
+                              ? 'bg-green-100 text-green-800'
+                              : grant.status === 'revoked'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {grant.status}
+                          </span>
+                        </div>
+                        
+                        <h3 className="text-lg font-medium text-gray-900 mb-1">
+                          📄 {grant.filename}
+                        </h3>
+                        
+                        <div className="mb-2">
+                          <CidDisplay cid={grant.cid} />
+                        </div>
+                        
+                        <p className="text-sm text-gray-500 mb-2">
+                          <strong>Shared by:</strong>{' '}
+                          <span className="text-indigo-600 font-medium">{grant.granter_username}</span>
+                        </p>
+                        
+                        <p className="text-xs text-gray-400">
+                          Shared: {new Date(grant.created_at).toLocaleString()}
+                        </p>
+                        
+                        {grant.expires_at && (
+                          <p className="text-xs text-gray-400 mt-1">
+                            Expires: {new Date(grant.expires_at).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                      
+                      <div className="ml-4">
+                        {grant.status === 'active' && (
+                          <button
+                            onClick={() => {
+                              setRedeemCid(grant.cid);
+                              setActiveTab('redeem');
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-teal-500 to-green-500 text-white rounded-lg hover:from-teal-600 hover:to-green-600 transition-all flex items-center gap-2"
+                          >
+                            <span>🔓</span>
+                            Decrypt & View
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Request Access Tab (for doctors/providers) */}
         {activeTab === 'request' && (
           <div className="p-6">
@@ -1051,7 +1158,7 @@ export default function AccessRequestsPage() {
               <button
                 type="submit"
                 disabled={isRequesting}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-neon disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isRequesting ? 'Submitting...' : 'Submit Request'}
               </button>
@@ -1121,7 +1228,7 @@ export default function AccessRequestsPage() {
               <button
                 type="submit"
                 disabled={isRedeeming || !hasKeys}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-neon disabled:opacity-50 disabled:cursor-not-allowed"
                 title={!hasKeys ? 'Generate keys first in Keys tab' : 'Redeem access and decrypt'}
               >
                 {isRedeeming ? 'Redeeming...' : isDecrypting ? 'Decrypting...' : 'Redeem & Decrypt'}
@@ -1323,7 +1430,7 @@ export default function AccessRequestsPage() {
                   <div className="space-y-2">
                     <button
                       onClick={handleGenerateKeys}
-                      className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                      className="btn-neon"
                     >
                       Generate New Keys
                     </button>

@@ -1,288 +1,336 @@
 /**
- * Upload Page
- * Encrypt and upload health records to IPFS
- * 
- * Backend Endpoints Called:
- * - POST /upload/encrypt - Encrypts file with CEK
- * - POST /upload/pin - Pins encrypted file to IPFS and returns CID
+ * Upload Page - Modern Colorful File Upload
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
-import NetworkCheck from '@/components/NetworkCheck';
-import CidDisplay from '@/components/CidDisplay';
-import TxHashDisplay from '@/components/TxHashDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
-import { uploadFile, encryptFile, pinFile } from '@/lib/api';
+import { uploadFile } from '@/lib/api';
 
-interface UploadResult {
-  cid: string;
-  txHash?: string;
-  filename: string;
-  fileId?: number;
-  capsule?: string;
+interface UploadProgress {
+  stage: 'idle' | 'encrypting' | 'uploading' | 'recording' | 'complete' | 'error';
+  progress: number;
+  message: string;
 }
 
 export default function UploadPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { isConnected, isCorrectNetwork } = useWalletContext();
-  
+  const { address } = useWalletContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadStep, setUploadStep] = useState<'select' | 'encrypting' | 'pinning' | 'complete'>('select');
-  const [error, setError] = useState('');
-  const [result, setResult] = useState<UploadResult | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
+    stage: 'idle',
+    progress: 0,
+    message: 'Ready to upload'
+  });
+  const [result, setResult] = useState<{ cid: string; txHash?: string } | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
+    if (!authLoading && !isAuthenticated) router.push('/login');
   }, [authLoading, isAuthenticated, router]);
 
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      setSelectedFile(files[0]);
+      setUploadProgress({ stage: 'idle', progress: 0, message: 'File selected' });
+      setResult(null);
+    }
+  }, []);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setError('');
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setSelectedFile(files[0]);
+      setUploadProgress({ stage: 'idle', progress: 0, message: 'File selected' });
       setResult(null);
-      setUploadStep('select');
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setError('');
-      setResult(null);
-      setUploadStep('select');
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const handleUpload = async () => {
     if (!selectedFile || !user?.id) return;
 
-    setIsUploading(true);
-    setError('');
-
     try {
-      // Use the direct single-step upload endpoint
-      setUploadStep('encrypting');
-      
-      const uploadResult = await uploadFile(selectedFile, user.id, user.public_key);
-      
-      if (uploadResult.error) {
-        throw new Error(uploadResult.error);
+      setUploadProgress({ stage: 'encrypting', progress: 20, message: 'Encrypting your file...' });
+      await new Promise(r => setTimeout(r, 500));
+
+      setUploadProgress({ stage: 'uploading', progress: 50, message: 'Uploading to decentralized storage...' });
+
+      // Use user's Umbral public key for encryption
+      const response = await uploadFile(selectedFile, user.id, user.public_key || undefined);
+
+      if (response.error) {
+        throw new Error(response.error);
       }
 
-      if (!uploadResult.data) {
-        throw new Error('Upload failed');
-      }
+      setUploadProgress({ stage: 'recording', progress: 80, message: 'Recording on blockchain...' });
+      await new Promise(r => setTimeout(r, 500));
 
-      setUploadStep('pinning');
-      // Small delay for UI feedback
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Success!
-      setUploadStep('complete');
+      setUploadProgress({ stage: 'complete', progress: 100, message: 'Upload complete!' });
       setResult({
-        cid: uploadResult.data.cid,
-        txHash: '0x' + 'a'.repeat(64), // Demo tx hash - would come from blockchain in production
-        filename: uploadResult.data.filename,
-        fileId: uploadResult.data.file_id,
-        capsule: uploadResult.data.capsule,
+        cid: response.data?.cid || 'Unknown',
+        txHash: response.data?.tx_hash
       });
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setUploadStep('select');
-    } finally {
-      setIsUploading(false);
+    } catch (error) {
+      console.error('Upload failed:', error);
+      setUploadProgress({
+        stage: 'error',
+        progress: 0,
+        message: error instanceof Error ? error.message : 'Upload failed'
+      });
     }
   };
 
-  const handleReset = () => {
+  const resetUpload = () => {
     setSelectedFile(null);
+    setUploadProgress({ stage: 'idle', progress: 0, message: 'Ready to upload' });
     setResult(null);
-    setError('');
-    setUploadStep('select');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
-
-  const isUploadEnabled = isConnected && isCorrectNetwork && selectedFile && !isUploading;
 
   if (authLoading) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
         </div>
       </Layout>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
+
+  const stages = [
+    { id: 'encrypting', label: 'Encrypt', icon: '🔐' },
+    { id: 'uploading', label: 'Upload', icon: '☁️' },
+    { id: 'recording', label: 'Record', icon: '⛓️' },
+    { id: 'complete', label: 'Done', icon: '✅' }
+  ];
 
   return (
     <Layout>
-      <NetworkCheck />
-      
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Upload Record</h1>
-        <p className="mt-1 text-gray-600">
-          Encrypt and store your health records securely on IPFS
-        </p>
-      </div>
-
-      {/* Upload Area */}
-      <div className="bg-white rounded-xl shadow-sm border p-8 max-w-2xl">
-        {/* Connection Warning */}
-        {!isConnected && (
-          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800">
-            Please connect your wallet to upload files
-          </div>
-        )}
-
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
-        )}
-
-        {/* File Selection */}
-        {!result && (
-          <>
-            <div
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-                selectedFile 
-                  ? 'border-blue-300 bg-blue-50' 
-                  : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileSelect}
-                className="hidden"
-                accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
-              />
-              
-              {selectedFile ? (
-                <div>
-                  <svg className="mx-auto h-12 w-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <p className="mt-4 text-lg font-medium text-gray-900">{selectedFile.name}</p>
-                  <p className="mt-1 text-sm text-gray-500">
-                    {(selectedFile.size / 1024).toFixed(1)} KB
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
-                  <p className="mt-4 text-lg font-medium text-gray-900">
-                    Drop your file here, or click to browse
-                  </p>
-                  <p className="mt-1 text-sm text-gray-500">
-                    PDF, DOC, TXT, JPG, PNG up to 10MB
-                  </p>
-                </div>
-              )}
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4">
+            <div className="icon-box icon-box-pink">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
             </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Upload Record</h1>
+              <p className="text-gray-500">Securely store your health records with encryption</p>
+            </div>
+          </div>
+        </div>
 
-            {/* Upload Progress */}
-            {isUploading && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    {uploadStep === 'encrypting' && 'Encrypting file...'}
-                    {uploadStep === 'pinning' && 'Uploading to IPFS...'}
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                    style={{ width: uploadStep === 'encrypting' ? '50%' : '90%' }}
-                  ></div>
-                </div>
-              </div>
-            )}
-
-            {/* Upload Button */}
-            <div className="mt-6 flex space-x-4">
-              <button
-                onClick={handleUpload}
-                disabled={!isUploadEnabled}
-                className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
-                  isUploadEnabled
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+        {/* Main Card */}
+        <div className="glass-card p-8">
+          {!result ? (
+            <>
+              {/* Drop Zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+                  isDragging 
+                    ? 'border-indigo-500 bg-indigo-50' 
+                    : selectedFile 
+                      ? 'border-emerald-400 bg-emerald-50' 
+                      : 'border-gray-200 bg-gray-50 hover:border-indigo-300 hover:bg-indigo-50/50'
                 }`}
               >
-                {isUploading ? 'Uploading...' : 'Encrypt & Upload'}
-              </button>
-              
-              {selectedFile && !isUploading && (
-                <button
-                  onClick={handleReset}
-                  className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          </>
-        )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
+                />
+                
+                {selectedFile ? (
+                  <div className="space-y-3">
+                    <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto">
+                      <span className="text-3xl">📄</span>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{selectedFile.name}</p>
+                      <p className="text-sm text-gray-500">{formatFileSize(selectedFile.size)}</p>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); resetUpload(); }}
+                      className="text-sm text-gray-500 hover:text-red-500 transition-colors"
+                    >
+                      Remove file
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto">
+                      <svg className="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">Drop your file here</p>
+                      <p className="text-sm text-gray-500">or click to browse</p>
+                    </div>
+                    <p className="text-xs text-gray-400">PDF, DOC, TXT, JPG, PNG up to 10MB</p>
+                  </div>
+                )}
+              </div>
 
-        {/* Success Result */}
-        {result && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {/* Progress */}
+              {uploadProgress.stage !== 'idle' && uploadProgress.stage !== 'error' && (
+                <div className="mt-8 space-y-4">
+                  <div className="flex justify-between items-center">
+                    {stages.map((stage, i) => {
+                      const stageOrder = ['encrypting', 'uploading', 'recording', 'complete'];
+                      const currentIndex = stageOrder.indexOf(uploadProgress.stage);
+                      const stageIndex = stageOrder.indexOf(stage.id);
+                      const isActive = stageIndex <= currentIndex;
+                      const isCurrent = stage.id === uploadProgress.stage;
+                      
+                      return (
+                        <div key={stage.id} className="flex items-center">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg transition-all ${
+                            isActive 
+                              ? isCurrent 
+                                ? 'bg-gradient-to-br from-indigo-500 to-purple-500 text-white animate-pulse' 
+                                : 'bg-emerald-100 text-emerald-600' 
+                              : 'bg-gray-100 text-gray-400'
+                          }`}>
+                            {stage.icon}
+                          </div>
+                          {i < stages.length - 1 && (
+                            <div className={`w-12 h-1 mx-1 rounded-full transition-colors ${
+                              stageIndex < currentIndex ? 'bg-emerald-400' : 'bg-gray-200'
+                            }`} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="bg-gray-100 h-2 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                      style={{ width: `${uploadProgress.progress}%` }}
+                    />
+                  </div>
+                  <p className="text-center text-gray-600">{uploadProgress.message}</p>
+                </div>
+              )}
+
+              {/* Error */}
+              {uploadProgress.stage === 'error' && (
+                <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-center">
+                  <p className="font-medium">Upload Failed</p>
+                  <p className="text-sm mt-1">{uploadProgress.message}</p>
+                </div>
+              )}
+
+              {/* Upload Button */}
+              <div className="mt-8 flex justify-center">
+                <button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || uploadProgress.stage !== 'idle' && uploadProgress.stage !== 'error'}
+                  className="btn-neon px-8 py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploadProgress.stage !== 'idle' && uploadProgress.stage !== 'error' && uploadProgress.stage !== 'complete' 
+                    ? 'Uploading...' 
+                    : 'Upload Securely'}
+                </button>
+              </div>
+            </>
+          ) : (
+            /* Success View */
+            <div className="text-center py-8">
+              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg className="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <h3 className="text-xl font-semibold text-gray-900">Upload Successful!</h3>
-              <p className="mt-1 text-gray-600">
-                <span className="font-medium">{result.filename}</span> has been encrypted and stored
-              </p>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Upload Complete!</h2>
+              <p className="text-gray-500 mb-6">Your health record has been securely stored</p>
+              
+              <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left">
+                <div className="mb-3">
+                  <p className="text-sm text-gray-500 mb-1">Content ID (CID)</p>
+                  <code className="text-sm text-indigo-600 break-all">{result.cid}</code>
+                </div>
+                {result.txHash && (
+                  <div>
+                    <p className="text-sm text-gray-500 mb-1">Transaction Hash</p>
+                    <a 
+                      href={`https://sepolia.etherscan.io/tx/0x${result.txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-indigo-600 hover:text-indigo-800 break-all underline"
+                    >
+                      0x{result.txHash}
+                    </a>
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex gap-3 justify-center">
+                <button onClick={() => router.push('/files')} className="btn-neon">
+                  View Files
+                </button>
+                <button onClick={resetUpload} className="btn-ghost">
+                  Upload Another
+                </button>
+              </div>
             </div>
+          )}
+        </div>
 
-            <CidDisplay cid={result.cid} label="Content Identifier (CID)" />
-            
-            {result.txHash && (
-              <TxHashDisplay txHash={result.txHash} label="Blockchain Transaction" status="confirmed" />
-            )}
-
-            <button
-              onClick={handleReset}
-              className="w-full py-3 border border-blue-600 text-blue-600 rounded-lg font-medium hover:bg-blue-50 transition-colors"
-            >
-              Upload Another File
-            </button>
-          </div>
-        )}
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+          {[
+            { icon: '🔐', title: 'End-to-End Encryption', desc: 'Your files are encrypted before upload', color: 'indigo' },
+            { icon: '🌐', title: 'Decentralized Storage', desc: 'Stored on IPFS for durability', color: 'purple' },
+            { icon: '⛓️', title: 'Blockchain Verified', desc: 'Immutable proof of ownership', color: 'pink' }
+          ].map((item) => (
+            <div key={item.title} className="glass-card p-4 flex items-start gap-3">
+              <div className={`icon-box icon-box-${item.color} w-10 h-10 text-sm`}>
+                <span>{item.icon}</span>
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">{item.title}</h3>
+                <p className="text-xs text-gray-500">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </Layout>
   );

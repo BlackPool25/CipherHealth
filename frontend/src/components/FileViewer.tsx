@@ -181,21 +181,21 @@ export default function FileViewer({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-100">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">{filename}</h3>
-            <p className="text-xs text-gray-500 font-mono truncate max-w-md">
+            <p className="text-xs text-indigo-600 font-mono truncate max-w-md">
               CID: {cid}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -227,17 +227,17 @@ export default function FileViewer({
                   value={privateKeyInput}
                   onChange={(e) => setPrivateKeyInput(e.target.value)}
                   placeholder="Enter your Umbral private key..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                  className="input-dark w-full font-mono text-sm"
                 />
               </div>
 
               <button
                 onClick={handleDownload}
                 disabled={isLoading || !privateKeyInput}
-                className={`w-full py-3 rounded-lg font-medium transition-colors ${
+                className={`w-full btn-neon py-3 ${
                   isLoading || !privateKeyInput
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                    ? 'opacity-50 cursor-not-allowed'
+                    : ''
                 }`}
               >
                 {isLoading ? (
@@ -259,7 +259,7 @@ export default function FileViewer({
               {renderFilePreview()}
               
               {/* File Info */}
-              <div className="bg-gray-50 rounded-lg p-3 flex items-center justify-between">
+              <div className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-900">{fileData.filename}</p>
                   <p className="text-xs text-gray-500">
@@ -268,7 +268,7 @@ export default function FileViewer({
                 </div>
                 <button
                   onClick={handleSaveFile}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center"
+                  className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-sm font-medium hover:bg-emerald-600 transition-colors flex items-center"
                 >
                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -281,10 +281,10 @@ export default function FileViewer({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t bg-gray-50 flex justify-end space-x-3">
+        <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors"
+            className="btn-ghost"
           >
             Close
           </button>

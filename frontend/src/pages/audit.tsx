@@ -1,284 +1,248 @@
 /**
- * Audit Page
- * View transaction history and access logs
- * 
- * Backend Endpoints Called:
- * - GET /audit/logs/{userId} - Gets audit logs for user
- * 
- * Note: In production, audit logs would be read from blockchain events
+ * Audit Page - Activity Log with Modern Colorful Theme
  */
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
-import NetworkCheck from '@/components/NetworkCheck';
-import TxHashDisplay from '@/components/TxHashDisplay';
-import CidDisplay from '@/components/CidDisplay';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWalletContext } from '@/contexts/WalletContext';
-import { getAuditLogs } from '@/lib/api';
-import { SEPOLIA_ETHERSCAN_TX } from '@/lib/constants';
+import { getAuditLog } from '@/lib/api';
 
-interface AuditLog {
+interface AuditEntry {
   id: number;
-  type: 'upload' | 'grant' | 'revoke' | 'access';
-  description: string;
-  cid?: string;
+  action: string;
+  actor_id: number;
+  target_id?: number;
+  record_id?: number;
+  details?: string;
   tx_hash?: string;
-  timestamp: string;
+  created_at: string;
 }
 
-// Demo data for illustration
-const DEMO_LOGS: AuditLog[] = [
-  {
-    id: 1,
-    type: 'upload',
-    description: 'Uploaded medical_record.pdf',
-    cid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
-    tx_hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-    timestamp: '2024-01-15T10:30:00Z',
-  },
-  {
-    id: 2,
-    type: 'grant',
-    description: 'Granted access to Dr. Smith (User #2)',
-    tx_hash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
-    timestamp: '2024-01-15T11:00:00Z',
-  },
-  {
-    id: 3,
-    type: 'access',
-    description: 'Dr. Smith accessed medical_record.pdf',
-    timestamp: '2024-01-16T09:15:00Z',
-  },
-  {
-    id: 4,
-    type: 'revoke',
-    description: 'Revoked access from Dr. Smith',
-    tx_hash: '0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba',
-    timestamp: '2024-01-20T14:30:00Z',
-  },
-];
+type FilterType = 'all' | 'access' | 'grant' | 'upload' | 'revoke';
+
+const getActionInfo = (action: string) => {
+  const actions: Record<string, { icon: string; bg: string; text: string; label: string }> = {
+    access: { icon: '👁️', bg: 'bg-sky-50', text: 'text-sky-600', label: 'Access' },
+    grant: { icon: '✅', bg: 'bg-emerald-50', text: 'text-emerald-600', label: 'Grant' },
+    upload: { icon: '📤', bg: 'bg-purple-50', text: 'text-purple-600', label: 'Upload' },
+    revoke: { icon: '🚫', bg: 'bg-red-50', text: 'text-red-600', label: 'Revoke' },
+    request: { icon: '📨', bg: 'bg-amber-50', text: 'text-amber-600', label: 'Request' },
+  };
+  return actions[action.toLowerCase()] || { icon: '📋', bg: 'bg-gray-50', text: 'text-gray-600', label: action };
+};
+
+const formatTimeAgo = (dateStr: string) => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString();
+};
 
 export default function AuditPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { isConnected, isCorrectNetwork } = useWalletContext();
-  
-  const [logs, setLogs] = useState<AuditLog[]>([]);
+
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-  const [filter, setFilter] = useState<string>('all');
+  const [filter, setFilter] = useState<FilterType>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
+    if (!authLoading && !isAuthenticated) router.push('/login');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
-    if (user?.id) {
-      loadLogs();
-    }
+    if (user?.id) loadAuditLog();
   }, [user]);
 
-  const loadLogs = async () => {
+  const loadAuditLog = async () => {
     if (!user?.id) return;
     setIsLoading(true);
-
-    const result = await getAuditLogs(user.id);
-
-    if (result.data?.logs) {
-      setLogs(result.data.logs);
-    } else {
-      // Use demo data if no logs from backend
-      setLogs(DEMO_LOGS);
+    try {
+      const result = await getAuditLog(user.id);
+      if (result.data) setEntries(result.data.entries || []);
+    } catch (error) {
+      console.error('Failed to load audit log:', error);
     }
-
     setIsLoading(false);
   };
 
-  const filteredLogs = filter === 'all' 
-    ? logs 
-    : logs.filter(log => log.type === filter);
-
-  const getTypeStyles = (type: string) => {
-    switch (type) {
-      case 'upload':
-        return { bg: 'bg-blue-100', text: 'text-blue-700', icon: '📤' };
-      case 'grant':
-        return { bg: 'bg-green-100', text: 'text-green-700', icon: '🔓' };
-      case 'revoke':
-        return { bg: 'bg-red-100', text: 'text-red-700', icon: '🔒' };
-      case 'access':
-        return { bg: 'bg-purple-100', text: 'text-purple-700', icon: '👁️' };
-      default:
-        return { bg: 'bg-gray-100', text: 'text-gray-700', icon: '📋' };
+  const filteredEntries = entries.filter(entry => {
+    if (filter !== 'all' && entry.action.toLowerCase() !== filter) return false;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return (
+        entry.action.toLowerCase().includes(query) ||
+        entry.details?.toLowerCase().includes(query) ||
+        entry.tx_hash?.toLowerCase().includes(query)
+      );
     }
-  };
-
-  const formatDate = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString();
-  };
+    return true;
+  });
 
   if (authLoading) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
         </div>
       </Layout>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
+
+  const filters: { value: FilterType; label: string; icon: string }[] = [
+    { value: 'all', label: 'All', icon: '📋' },
+    { value: 'access', label: 'Access', icon: '👁️' },
+    { value: 'grant', label: 'Grants', icon: '✅' },
+    { value: 'upload', label: 'Uploads', icon: '📤' },
+    { value: 'revoke', label: 'Revokes', icon: '🚫' },
+  ];
 
   return (
     <Layout>
-      <NetworkCheck />
-      
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Audit Log</h1>
-        <p className="mt-1 text-gray-600">
-          Track all access and transactions for your health records
-        </p>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border p-4 mb-6">
-        <div className="flex items-center space-x-4">
-          <span className="text-sm font-medium text-gray-700">Filter by:</span>
-          <div className="flex space-x-2">
-            {['all', 'upload', 'grant', 'revoke', 'access'].map((type) => (
-              <button
-                key={type}
-                onClick={() => setFilter(type)}
-                className={`px-3 py-1 text-sm rounded-full transition-colors ${
-                  filter === type
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </button>
-            ))}
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4">
+            <div className="icon-box icon-box-sky">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Activity Log</h1>
+              <p className="text-gray-500">Track all access and changes to your records</p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Audit Logs */}
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-48">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        {/* Filters */}
+        <div className="glass-card p-4 mb-6">
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+            <div className="flex items-center gap-2 overflow-x-auto">
+              {filters.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setFilter(f.value)}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 whitespace-nowrap transition-all ${
+                    filter === f.value
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  <span>{f.icon}</span>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            
+            <div className="relative w-full sm:w-auto">
+              <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search activity..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="input-dark pl-12 w-full sm:w-64"
+              />
+            </div>
           </div>
-        ) : filteredLogs.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <p className="mt-4">No audit logs found</p>
+        </div>
+
+        {/* Activity List */}
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="relative">
+              <div className="w-12 h-12 border-4 border-indigo-100 rounded-full"></div>
+              <div className="absolute top-0 left-0 w-12 h-12 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+            </div>
+          </div>
+        ) : filteredEntries.length === 0 ? (
+          <div className="glass-card p-12 text-center">
+            <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">No activity found</h3>
+            <p className="text-gray-500">
+              {searchQuery || filter !== 'all' ? 'Try adjusting your filters' : 'Activity will appear here when actions occur'}
+            </p>
           </div>
         ) : (
-          <div className="divide-y">
-            {filteredLogs.map((log) => {
-              const styles = getTypeStyles(log.type);
-              return (
-                <div 
-                  key={log.id} 
-                  className="px-6 py-4 hover:bg-gray-50 cursor-pointer transition-colors"
-                  onClick={() => setSelectedLog(log)}
-                >
-                  <div className="flex items-start space-x-4">
-                    <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${styles.bg}`}>
-                      <span className="text-lg">{styles.icon}</span>
+          <div className="glass-card overflow-hidden">
+            <div className="divide-y divide-gray-100">
+              {filteredEntries.map((entry) => {
+                const actionInfo = getActionInfo(entry.action);
+                return (
+                  <div key={entry.id} className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors">
+                    <div className={`${actionInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center border border-gray-100`}>
+                      <span className="text-xl">{actionInfo.icon}</span>
                     </div>
+                    
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <p className="font-medium text-gray-900">{log.description}</p>
-                        <span className="text-xs text-gray-500">{formatDate(log.timestamp)}</span>
-                      </div>
-                      <div className="flex items-center space-x-3 mt-1">
-                        <span className={`px-2 py-0.5 text-xs rounded-full ${styles.bg} ${styles.text}`}>
-                          {log.type}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionInfo.bg} ${actionInfo.text}`}>
+                          {actionInfo.label}
                         </span>
-                        {log.tx_hash && (
-                          <a
-                            href={`${SEPOLIA_ETHERSCAN_TX}/${log.tx_hash}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-xs text-blue-600 hover:underline"
-                          >
-                            View tx →
-                          </a>
-                        )}
+                        <span className="text-sm text-gray-500">{formatTimeAgo(entry.created_at)}</span>
                       </div>
+                      
+                      <p className="text-gray-900 font-medium">
+                        {entry.details || `${actionInfo.label} action performed`}
+                      </p>
+                      
+                      {entry.tx_hash && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="badge-info text-xs">⛓️ Blockchain Verified</span>
+                          <code className="text-xs text-gray-400 truncate max-w-[200px]">
+                            {entry.tx_hash}
+                          </code>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="text-right text-sm text-gray-500">
+                      {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
-      </div>
 
-      {/* Detail Modal */}
-      {selectedLog && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-          onClick={() => setSelectedLog(null)}
-        >
-          <div 
-            className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-6 py-4 border-b bg-gray-50 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Event Details</h3>
-              <button
-                onClick={() => setSelectedLog(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+          {[
+            { label: 'Total Actions', count: entries.length, color: 'indigo' },
+            { label: 'Access Events', count: entries.filter(e => e.action.toLowerCase() === 'access').length, color: 'sky' },
+            { label: 'Grants Made', count: entries.filter(e => e.action.toLowerCase() === 'grant').length, color: 'emerald' },
+            { label: 'Uploads', count: entries.filter(e => e.action.toLowerCase() === 'upload').length, color: 'purple' },
+          ].map((stat) => (
+            <div key={stat.label} className="glass-card p-4 text-center">
+              <div className={`text-2xl font-bold text-${stat.color}-600`}>{stat.count}</div>
+              <div className="text-sm text-gray-500">{stat.label}</div>
             </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <span className="text-sm text-gray-500">Event Type</span>
-                <p className="font-medium text-gray-900 capitalize">{selectedLog.type}</p>
-              </div>
-
-              <div>
-                <span className="text-sm text-gray-500">Description</span>
-                <p className="font-medium text-gray-900">{selectedLog.description}</p>
-              </div>
-
-              <div>
-                <span className="text-sm text-gray-500">Timestamp</span>
-                <p className="font-medium text-gray-900">{formatDate(selectedLog.timestamp)}</p>
-              </div>
-
-              {selectedLog.cid && (
-                <CidDisplay cid={selectedLog.cid} label="Content ID (CID)" />
-              )}
-
-              {selectedLog.tx_hash && (
-                <TxHashDisplay 
-                  txHash={selectedLog.tx_hash} 
-                  label="Transaction Hash" 
-                  status="confirmed" 
-                />
-              )}
-            </div>
-          </div>
+          ))}
         </div>
-      )}
+      </div>
     </Layout>
   );
 }

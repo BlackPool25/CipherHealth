@@ -1,5 +1,6 @@
 /**
  * Main layout component wrapping all pages
+ * Modern colorful healthcare theme
  */
 
 import { ReactNode } from 'react';
@@ -11,7 +12,7 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-mesh-gradient">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}

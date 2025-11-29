@@ -1,12 +1,6 @@
 /**
- * Grant Access Page
+ * Grant Access Page - Modern Colorful Theme
  * Manage access grants for health records
- * 
- * Backend Endpoints Called:
- * - GET /upload/files/{userId} - Lists user's files
- * - GET /grant/list/{userId} - Lists grants created by user
- * - POST /grant/create - Creates a new access grant
- * - POST /grant/revoke - Revokes an existing grant
  */
 
 import { useState, useEffect } from 'react';
@@ -44,7 +38,6 @@ export default function GrantAccessPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   
-  // Create grant form state
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
   const [granteeId, setGranteeId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -52,33 +45,34 @@ export default function GrantAccessPage() {
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
+    if (!authLoading && !isAuthenticated) router.push('/login');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
-    if (user?.id) {
-      loadData();
-    }
+    if (user?.id) loadData();
   }, [user]);
+
+  // Handle pre-selected file from URL
+  useEffect(() => {
+    const { fileId } = router.query;
+    if (fileId && typeof fileId === 'string') {
+      const id = parseInt(fileId);
+      if (!isNaN(id)) {
+        setSelectedFileId(id);
+        setShowCreateModal(true);
+      }
+    }
+  }, [router.query]);
 
   const loadData = async () => {
     if (!user?.id) return;
     setIsLoading(true);
-
     const [filesResult, grantsResult] = await Promise.all([
       listFiles(user.id),
       listGrants(user.id),
     ]);
-
-    if (filesResult.data) {
-      setFiles(filesResult.data.files || []);
-    }
-    if (grantsResult.data) {
-      setGrants(grantsResult.data.grants || []);
-    }
-
+    if (filesResult.data) setFiles(filesResult.data.files || []);
+    if (grantsResult.data) setGrants(grantsResult.data.grants || []);
     setIsLoading(false);
   };
 
@@ -87,53 +81,39 @@ export default function GrantAccessPage() {
       setCreateError('Please fill in all fields');
       return;
     }
-
     setIsCreating(true);
     setCreateError('');
-
     const result = await createGrant({
       granter_id: user.id,
       grantee_id: parseInt(granteeId),
       file_id: selectedFileId,
     });
-
     if (result.error) {
       setCreateError(result.error);
       setIsCreating(false);
       return;
     }
-
-    // Success - close modal and refresh
     setShowCreateModal(false);
     setSelectedFileId(null);
     setGranteeId('');
-    setLastTxHash('0x' + 'b'.repeat(64)); // Demo tx hash
+    setLastTxHash('0x' + 'b'.repeat(64));
     await loadData();
     setIsCreating(false);
   };
 
   const handleRevokeGrant = async (grantId: number) => {
     if (!user?.id) return;
-
-    if (!confirm('Are you sure you want to revoke this access grant?')) {
-      return;
-    }
-
+    if (!confirm('Are you sure you want to revoke this access grant?')) return;
     const result = await revokeGrant({
       grant_id: grantId,
       granter_id: user.id,
       emit_onchain: true,
     });
-
     if (result.error) {
-      alert(`Failed to revoke grant: ${result.error}`);
+      alert(`Failed to revoke: ${result.error}`);
       return;
     }
-
-    if (result.data?.tx_hash) {
-      setLastTxHash(result.data.tx_hash);
-    }
-
+    if (result.data?.tx_hash) setLastTxHash(result.data.tx_hash);
     await loadData();
   };
 
@@ -141,183 +121,166 @@ export default function GrantAccessPage() {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
         </div>
       </Layout>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
 
   return (
     <Layout>
-      <NetworkCheck />
-      
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Grant Access</h1>
-          <p className="mt-1 text-gray-600">
-            Share your health records with healthcare providers
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          disabled={!isConnected || !isCorrectNetwork || files.length === 0}
-          className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-            isConnected && isCorrectNetwork && files.length > 0
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-          }`}
-        >
-          Create Grant
-        </button>
-      </div>
-
-      {/* Last Transaction */}
-      {lastTxHash && (
-        <div className="mb-6">
-          <TxHashDisplay txHash={lastTxHash} label="Last Transaction" status="confirmed" />
-        </div>
-      )}
-
-      {/* Active Grants */}
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="px-6 py-4 border-b bg-gray-50">
-          <h2 className="text-lg font-semibold text-gray-900">Your Access Grants</h2>
-        </div>
-
-        {isLoading ? (
-          <div className="flex items-center justify-center h-48">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          </div>
-        ) : grants.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <p className="mt-4">No access grants created yet</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              disabled={files.length === 0}
-              className="mt-4 text-blue-600 hover:underline"
-            >
-              {files.length > 0 ? 'Create your first grant' : 'Upload a file first'}
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-4">
+              <div className="icon-box icon-box-purple">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Grant Access</h1>
+                <p className="text-gray-500">Share your health records securely</p>
+              </div>
+            </div>
+            <button onClick={() => setShowCreateModal(true)} className="btn-neon flex items-center gap-2">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Grant
             </button>
           </div>
-        ) : (
-          <div className="divide-y">
-            {grants.map((grant) => (
-              <div key={grant.id} className="px-6 py-4 flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex-shrink-0">
-                      <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                        <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                      </div>
+        </div>
+
+        <NetworkCheck />
+        
+        {lastTxHash && (
+          <div className="mb-6">
+            <TxHashDisplay txHash={lastTxHash} label="Last Transaction" status="confirmed" />
+          </div>
+        )}
+
+        {/* Grants List */}
+        <div className="glass-card overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-pink-50">
+            <h2 className="text-lg font-semibold text-gray-900">Your Active Grants</h2>
+            <p className="text-sm text-gray-500">Files you've shared with others</p>
+          </div>
+          
+          {isLoading ? (
+            <div className="flex items-center justify-center h-32">
+              <div className="relative">
+                <div className="w-10 h-10 border-4 border-indigo-100 rounded-full"></div>
+                <div className="absolute top-0 left-0 w-10 h-10 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+              </div>
+            </div>
+          ) : grants.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 rounded-full bg-purple-50 flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">No grants yet</h3>
+              <p className="text-gray-500 mb-4">Start sharing your records by creating a grant</p>
+              <button onClick={() => setShowCreateModal(true)} className="btn-neon">Create Grant</button>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {grants.map((grant) => (
+                <div key={grant.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="icon-box icon-box-indigo w-12 h-12">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
                     </div>
                     <div>
-                      <p className="font-medium text-gray-900">
-                        {grant.grantee_username || `User #${grant.grantee_id}`}
-                      </p>
+                      <p className="font-semibold text-gray-900">{grant.filename}</p>
                       <p className="text-sm text-gray-500">
-                        Access to: {grant.filename || `File #${grant.file_id}`}
+                        Shared with: <span className="text-indigo-600">{grant.grantee_username}</span>
                       </p>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center space-x-4">
-                  <span className={`px-3 py-1 text-sm rounded-full ${
-                    grant.status === 'active' 
-                      ? 'bg-green-100 text-green-700' 
-                      : 'bg-gray-100 text-gray-600'
-                  }`}>
-                    {grant.status}
-                  </span>
-                  {grant.status === 'active' && (
+                  <div className="flex items-center gap-3">
+                    <span className="badge-success">{grant.status}</span>
                     <button
                       onClick={() => handleRevokeGrant(grant.id)}
-                      className="text-red-600 hover:text-red-800 text-sm font-medium"
+                      className="btn-ghost text-red-500 border-red-200 hover:bg-red-50 text-sm"
                     >
                       Revoke
                     </button>
-                  )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Create Grant Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 overflow-hidden">
-            <div className="px-6 py-4 border-b bg-gray-50">
-              <h3 className="text-lg font-semibold text-gray-900">Create Access Grant</h3>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-100">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-gray-900">Create Access Grant</h3>
+              <button onClick={() => setShowCreateModal(false)} className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center">
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-
-            <div className="p-6 space-y-4">
-              {createError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-                  {createError}
-                </div>
-              )}
-
+            
+            {createError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">
+                {createError}
+              </div>
+            )}
+            
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Select File
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select File</label>
                 <select
                   value={selectedFileId || ''}
                   onChange={(e) => setSelectedFileId(parseInt(e.target.value) || null)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input-dark w-full"
                 >
                   <option value="">Choose a file...</option>
                   {files.map((file) => (
-                    <option key={file.id} value={file.id}>
-                      {file.filename}
-                    </option>
+                    <option key={file.id} value={file.id}>{file.filename}</option>
                   ))}
                 </select>
               </div>
-
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Grantee User ID
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Grantee User ID</label>
                 <input
                   type="number"
                   value={granteeId}
                   onChange={(e) => setGranteeId(e.target.value)}
                   placeholder="Enter user ID to share with"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input-dark w-full"
                 />
-                <p className="mt-1 text-xs text-gray-500">
-                  In production, this would be a user search/lookup
-                </p>
               </div>
-
-              <div className="flex space-x-3 pt-4">
-                <button
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setSelectedFileId(null);
-                    setGranteeId('');
-                    setCreateError('');
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
+              
+              {(!isConnected || !isCorrectNetwork) && (
+                <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-xl">
+                  ⚠️ Connect wallet to Sepolia network
+                </p>
+              )}
+              
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowCreateModal(false)} className="flex-1 btn-ghost">Cancel</button>
                 <button
                   onClick={handleCreateGrant}
-                  disabled={isCreating}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  disabled={isCreating || !selectedFileId || !granteeId || !isConnected || !isCorrectNetwork}
+                  className={`flex-1 btn-neon ${isCreating || !selectedFileId || !granteeId || !isConnected || !isCorrectNetwork ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {isCreating ? 'Creating...' : 'Create Grant'}
                 </button>

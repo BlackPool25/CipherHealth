@@ -1,319 +1,226 @@
 /**
- * Profile Page
- * 
- * Shows user profile information and encrypted key management.
- * Private key is protected and only shown after password confirmation.
+ * Profile Page - Modern Colorful User Profile
  */
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  loadKeys,
-  hasStoredKeys,
-  exportKeysForBackup,
-  clearStoredKeys,
-} from '@/lib/umbral';
+import { useWalletContext } from '@/contexts/WalletContext';
 
 export default function ProfilePage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
-  
-  // Key management state
-  const [hasKeys, setHasKeys] = useState(false);
-  const [publicKey, setPublicKey] = useState<string>('');
-  const [secretKeyHex, setSecretKeyHex] = useState<string>('');
-  const [signingKeyHex, setSigningKeyHex] = useState<string>('');
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordError, setPasswordError] = useState('');
-  const [keyBackup, setKeyBackup] = useState('');
-  
-  // The password to reveal private keys (simple protection)
-  const REVEAL_PASSWORD = 'show-my-keys';
+  const { address, disconnect } = useWalletContext();
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
+    if (!authLoading && !isAuthenticated) router.push('/login');
   }, [authLoading, isAuthenticated, router]);
 
-  useEffect(() => {
-    if (hasStoredKeys()) {
-      setHasKeys(true);
-      const keys = loadKeys();
-      if (keys.publicKeyHex) {
-        setPublicKey(keys.publicKeyHex);
-      }
-      if (keys.secretKeyBytes) {
-        setSecretKeyHex(Array.from(keys.secretKeyBytes).map(b => b.toString(16).padStart(2, '0')).join(''));
-      }
-      if (keys.signingKeyBytes) {
-        setSigningKeyHex(Array.from(keys.signingKeyBytes).map(b => b.toString(16).padStart(2, '0')).join(''));
-      }
-    }
-  }, []);
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
 
-  const handleRevealPrivateKey = () => {
-    if (confirmPassword === REVEAL_PASSWORD) {
-      setShowPrivateKey(true);
-      setPasswordError('');
-    } else {
-      setPasswordError('Incorrect password. Type "show-my-keys" to reveal.');
+  const handleLogout = async () => {
+    try {
+      await logout();
+      if (disconnect) disconnect();
+      router.push('/login');
+    } catch (error) {
+      console.error('Logout failed:', error);
     }
   };
 
-  const handleHidePrivateKey = () => {
-    setShowPrivateKey(false);
-    setConfirmPassword('');
-  };
-
-  const handleExportBackup = () => {
-    const backup = exportKeysForBackup();
-    if (backup) {
-      setKeyBackup(backup);
-    }
-  };
-
-  const handleClearKeys = () => {
-    if (confirm('Are you sure you want to clear your encryption keys? You will not be able to decrypt any files encrypted with these keys unless you have a backup!')) {
-      clearStoredKeys();
-      setHasKeys(false);
-      setPublicKey('');
-      setSecretKeyHex('');
-      setSigningKeyHex('');
-      setShowPrivateKey(false);
-      router.push('/access-requests');
-    }
-  };
-
-  const handleLogout = () => {
-    logout();
-    router.push('/login');
+  const formatAddress = (addr: string) => {
+    return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   };
 
   if (authLoading) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+          </div>
         </div>
       </Layout>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated || !user) return null;
+
+  const stats = [
+    { label: 'Records Uploaded', value: '12', icon: '📁', color: 'indigo' },
+    { label: 'Access Grants', value: '8', icon: '🔑', color: 'emerald' },
+    { label: 'Active Shares', value: '5', icon: '👥', color: 'purple' },
+    { label: 'Audit Events', value: '24', icon: '📋', color: 'sky' },
+  ];
 
   return (
     <Layout>
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
-          <p className="mt-1 text-gray-600">
-            Manage your account and encryption keys
-          </p>
-        </div>
-
-        {/* User Info Card */}
-        <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Account Information</h2>
-          
-          <div className="space-y-3">
-            <div>
-              <label className="text-sm text-gray-500">Username</label>
-              <p className="font-medium text-gray-900">{user?.username}</p>
-            </div>
-            
-            <div>
-              <label className="text-sm text-gray-500">Email</label>
-              <p className="font-medium text-gray-900">{user?.email || 'Not set'}</p>
-            </div>
-            
-            <div>
-              <label className="text-sm text-gray-500">User ID</label>
-              <p className="font-medium text-gray-900">{user?.id}</p>
-            </div>
-            
-            <div>
-              <label className="text-sm text-gray-500">Role</label>
-              <p className="font-medium text-gray-900 capitalize">{(user as any)?.role || 'User'}</p>
+        {/* Profile Card */}
+        <div className="glass-card overflow-hidden mb-6">
+          {/* Banner */}
+          <div className="h-32 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
+            <div className="absolute inset-0 opacity-30">
+              <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <defs>
+                  <pattern id="dots" patternUnits="userSpaceOnUse" width="20" height="20">
+                    <circle cx="2" cy="2" r="1" fill="white" opacity="0.3"/>
+                  </pattern>
+                </defs>
+                <rect fill="url(#dots)" width="100" height="100"/>
+              </svg>
             </div>
           </div>
           
-          <div className="mt-6 pt-4 border-t">
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-            >
-              Logout
-            </button>
+          {/* Profile Info */}
+          <div className="px-6 pb-6 -mt-12 relative">
+            <div className="flex flex-col sm:flex-row items-center sm:items-end gap-4">
+              <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold border-4 border-white shadow-xl">
+                {user.username?.charAt(0).toUpperCase() || '?'}
+              </div>
+              
+              <div className="flex-1 text-center sm:text-left">
+                <h1 className="text-2xl font-bold text-gray-900">{user.username || 'Anonymous User'}</h1>
+                <p className="text-gray-500 capitalize">Patient</p>
+              </div>
+              
+              <button
+                onClick={handleLogout}
+                className="btn-ghost text-red-500 border-red-200 hover:bg-red-50 hover:border-red-300"
+              >
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Logout
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Encryption Keys Card */}
-        <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">🔐 Encryption Keys</h2>
-          
-          {!hasKeys ? (
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-yellow-800">
-                You don't have encryption keys yet. Go to{' '}
-                <a href="/access-requests" className="underline font-medium">Access Management</a>{' '}
-                to generate keys.
-              </p>
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {stats.map((stat) => (
+            <div key={stat.label} className="glass-card p-4 text-center card-lift">
+              <div className={`icon-box icon-box-${stat.color} w-12 h-12 mx-auto mb-3`}>
+                <span className="text-lg">{stat.icon}</span>
+              </div>
+              <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
+              <div className="text-sm text-gray-500">{stat.label}</div>
             </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Public Key (always visible) */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Public Key (safe to share)
-                </label>
-                <div className="flex gap-2">
-                  <code className="flex-1 p-3 bg-gray-100 rounded text-xs break-all font-mono">
-                    {publicKey}
-                  </code>
+          ))}
+        </div>
+
+        {/* Account Details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Wallet Info */}
+          <div className="glass-card p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="icon-box icon-box-amber">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">Wallet</h2>
+            </div>
+            
+            {address ? (
+              <div className="space-y-3">
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <p className="text-sm text-gray-500 mb-1">Connected Address</p>
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm text-indigo-600 font-mono">{formatAddress(address)}</code>
+                    <button
+                      onClick={() => copyToClipboard(address, 'address')}
+                      className="p-1 hover:bg-gray-200 rounded transition-colors"
+                    >
+                      {copied === 'address' ? (
+                        <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="badge-success">🟢 Connected</span>
+                  <span className="text-sm text-gray-500">Sepolia Testnet</span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                <span className="text-amber-600">No wallet connected</span>
+              </div>
+            )}
+          </div>
+
+          {/* Account Info */}
+          <div className="glass-card p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="icon-box icon-box-indigo">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">Account</h2>
+            </div>
+            
+            <div className="space-y-3">
+              <div className="bg-gray-50 rounded-xl p-4">
+                <p className="text-sm text-gray-500 mb-1">User ID</p>
+                <div className="flex items-center gap-2">
+                  <code className="text-sm text-indigo-600 font-mono">{user.id}</code>
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(publicKey);
-                      alert('Public key copied!');
-                    }}
-                    className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                    onClick={() => copyToClipboard(String(user.id), 'id')}
+                    className="p-1 hover:bg-gray-200 rounded transition-colors"
                   >
-                    Copy
+                    {copied === 'id' ? (
+                      <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
                   </button>
                 </div>
               </div>
-
-              {/* Private Key (protected) */}
-              <div className="border-t pt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
-                    🔒 Private Keys (KEEP SECRET!)
-                  </label>
-                  {showPrivateKey && (
-                    <button
-                      onClick={handleHidePrivateKey}
-                      className="text-sm text-red-600 hover:underline"
-                    >
-                      Hide Keys
-                    </button>
-                  )}
-                </div>
-                
-                {!showPrivateKey ? (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-red-800 text-sm mb-3">
-                      ⚠️ Your private keys are hidden for security. Only reveal them if you need to:
-                    </p>
-                    <ul className="text-red-700 text-sm mb-4 list-disc list-inside">
-                      <li>Decrypt files on another device</li>
-                      <li>Create a manual backup</li>
-                      <li>Recover access after browser data loss</li>
-                    </ul>
-                    
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Type 'show-my-keys' to reveal"
-                        className="flex-1 px-3 py-2 border rounded text-sm"
-                      />
-                      <button
-                        onClick={handleRevealPrivateKey}
-                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm"
-                      >
-                        Reveal
-                      </button>
-                    </div>
-                    {passwordError && (
-                      <p className="text-red-600 text-sm mt-2">{passwordError}</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="p-4 bg-red-100 border border-red-300 rounded-lg">
-                      <p className="text-red-800 font-medium mb-2">⚠️ SECRET - DO NOT SHARE!</p>
-                      
-                      <div className="mb-3">
-                        <label className="text-sm text-red-700">Secret Key (for decryption):</label>
-                        <code className="block p-2 bg-white rounded text-xs break-all font-mono mt-1">
-                          {secretKeyHex}
-                        </code>
-                      </div>
-                      
-                      <div>
-                        <label className="text-sm text-red-700">Signing Key (for kfrag generation):</label>
-                        <code className="block p-2 bg-white rounded text-xs break-all font-mono mt-1">
-                          {signingKeyHex}
-                        </code>
-                      </div>
-                      
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(`Secret Key: ${secretKeyHex}\nSigning Key: ${signingKeyHex}`);
-                          alert('Keys copied to clipboard! Store safely and clear clipboard soon.');
-                        }}
-                        className="mt-3 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
-                      >
-                        Copy Both Keys
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Backup Export */}
-              <div className="border-t pt-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-2">Key Backup</h3>
-                <button
-                  onClick={handleExportBackup}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                >
-                  Export Encrypted Backup
-                </button>
-                
-                {keyBackup && (
-                  <div className="mt-3">
-                    <textarea
-                      readOnly
-                      value={keyBackup}
-                      className="w-full p-2 border rounded text-xs font-mono"
-                      rows={3}
-                    />
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(keyBackup);
-                        alert('Backup copied! Store in a safe place.');
-                      }}
-                      className="mt-1 text-sm text-blue-600 hover:underline"
-                    >
-                      Copy Backup String
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Danger Zone */}
-              <div className="border-t pt-4">
-                <h3 className="text-sm font-medium text-red-700 mb-2">⚠️ Danger Zone</h3>
-                <button
-                  onClick={handleClearKeys}
-                  className="px-4 py-2 bg-red-100 text-red-700 border border-red-300 rounded-lg hover:bg-red-200 text-sm"
-                >
-                  Clear All Keys
-                </button>
-                <p className="text-xs text-gray-500 mt-1">
-                  This will delete your keys from this browser. Make sure you have a backup!
-                </p>
+              
+              <div className="bg-gray-50 rounded-xl p-4">
+                <p className="text-sm text-gray-500 mb-1">Role</p>
+                <span className="badge-info capitalize">Patient</span>
               </div>
             </div>
-          )}
+          </div>
+        </div>
+
+        {/* Security Notice */}
+        <div className="glass-card p-6 mt-6 border-l-4 border-emerald-500">
+          <div className="flex items-start gap-4">
+            <div className="icon-box icon-box-emerald flex-shrink-0">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-1">Your Data is Secure</h3>
+              <p className="text-gray-500 text-sm">
+                All your health records are encrypted with proxy re-encryption and stored on decentralized infrastructure. 
+                Only you control who can access your data.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </Layout>

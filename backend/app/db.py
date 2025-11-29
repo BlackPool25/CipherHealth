@@ -442,13 +442,29 @@ async def revoke_grant(grant_id: int, tx_hash: Optional[str] = None) -> bool:
 
 
 async def get_grants_for_grantee(grantee_id: int) -> list[dict]:
-    """Get all active grants for a grantee."""
+    """Get all active grants for a grantee with file and granter info."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT * FROM grants
-            WHERE grantee_id = ? AND status = 'active'
+            SELECT 
+                g.id,
+                g.file_id,
+                g.granter_id,
+                g.grantee_id,
+                g.reencryption_key,
+                g.expires_at,
+                g.status,
+                g.tx_hash,
+                g.created_at,
+                f.filename,
+                f.cid,
+                u.username AS granter_username
+            FROM grants g
+            JOIN files f ON g.file_id = f.id
+            JOIN users u ON g.granter_id = u.id
+            WHERE g.grantee_id = ? AND g.status = 'active'
+            ORDER BY g.created_at DESC
             """,
             (grantee_id,),
         )
@@ -457,11 +473,31 @@ async def get_grants_for_grantee(grantee_id: int) -> list[dict]:
 
 
 async def get_grants_by_granter(granter_id: int) -> list[dict]:
-    """Get all grants created by a granter."""
+    """Get all grants created by a granter with file and grantee info."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM grants WHERE granter_id = ?", (granter_id,)
+            """
+            SELECT 
+                g.id,
+                g.file_id,
+                g.granter_id,
+                g.grantee_id,
+                g.reencryption_key,
+                g.expires_at,
+                g.status,
+                g.tx_hash,
+                g.created_at,
+                f.filename,
+                f.cid,
+                u.username AS grantee_username
+            FROM grants g
+            JOIN files f ON g.file_id = f.id
+            JOIN users u ON g.grantee_id = u.id
+            WHERE g.granter_id = ?
+            ORDER BY g.created_at DESC
+            """,
+            (granter_id,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

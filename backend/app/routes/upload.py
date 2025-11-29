@@ -32,6 +32,7 @@ from app.utils.umbral_utils import (
     encapsulate_cek,
     UMBRAL_AVAILABLE,
 )
+from app.utils.chain import is_chain_configured, set_record_onchain
 
 router = APIRouter()
 
@@ -49,6 +50,7 @@ class UploadResponse(BaseModel):
     filename: str
     encrypted_cek: str  # CEK encrypted with owner's public key (hex)
     capsule: str  # Umbral capsule for re-encryption (hex)
+    tx_hash: Optional[str] = None  # Blockchain transaction hash if recorded
     message: str
 
 
@@ -189,12 +191,22 @@ async def upload_file(
         )
         file_id = await create_file_record(file_record)
         
+        # Optionally record on blockchain
+        tx_hash = None
+        if is_chain_configured():
+            try:
+                tx_hash = await set_record_onchain(cid)
+            except Exception as chain_err:
+                # Log but don't fail the upload
+                print(f"Warning: Failed to record on-chain: {chain_err}")
+        
         return UploadResponse(
             cid=cid,
             file_id=file_id,
             filename=filename,
             encrypted_cek=cek_ciphertext,
             capsule=capsule_hex,
+            tx_hash=tx_hash,
             message="File encrypted and uploaded successfully",
         )
         

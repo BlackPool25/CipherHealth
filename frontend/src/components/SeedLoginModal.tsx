@@ -1,5 +1,5 @@
 /**
- * Seed Login Modal Component
+ * Seed Login Modal Component - Modern Colorful Theme
  * Handles invite-only authentication flow
  */
 
@@ -56,11 +56,9 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
     setIsLoading(true);
     setError('');
 
-    // Try seed-login first (for existing codes)
     const result = await seedLogin(inviteCode);
 
     if (result.error) {
-      // If login fails, code might be new - show register form
       setError('');
       setStep('register');
       setIsLoading(false);
@@ -68,7 +66,6 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
     }
 
     if (result.data) {
-      // Login successful - save token and user
       login(result.data.user, result.data.access_token);
       setStep('success');
       
@@ -102,7 +99,6 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
     }
 
     if (result.data) {
-      // Use the real token from backend
       login(result.data.user, result.data.access_token);
       setStep('success');
       
@@ -119,23 +115,22 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
       setError('Please enter an invite code');
       return;
     }
-    // Try quick login first
     handleQuickLogin();
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="glass-card max-w-md w-full overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="bg-blue-600 px-6 py-4">
-          <h2 className="text-xl font-semibold text-white">
-            {step === 'invite' && 'Invite-Only Access'}
-            {step === 'register' && 'Complete Registration'}
-            {step === 'success' && 'Welcome!'}
+        <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-6 py-5">
+          <h2 className="text-xl font-bold text-white">
+            {step === 'invite' && '🔑 Invite-Only Access'}
+            {step === 'register' && '✨ Complete Registration'}
+            {step === 'success' && '🎉 Welcome!'}
           </h2>
-          <p className="text-blue-100 text-sm mt-1">
+          <p className="text-white/80 text-sm mt-1">
             {step === 'invite' && 'Enter or generate an invite code'}
             {step === 'register' && 'Create your account'}
             {step === 'success' && 'Registration successful'}
@@ -145,7 +140,8 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
         {/* Content */}
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm flex items-center gap-2">
+              <span>⚠️</span>
               {error}
             </div>
           )}
@@ -153,7 +149,7 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
           {step === 'invite' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Invite Code
                 </label>
                 <input
@@ -161,7 +157,7 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
                   placeholder="Enter existing invite code"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input-dark w-full"
                 />
               </div>
               
@@ -169,16 +165,21 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
                 <button
                   onClick={handleUseExistingCode}
                   disabled={isLoading}
-                  className="flex-1 px-4 py-2 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 transition-colors disabled:opacity-50"
+                  className="flex-1 btn-ghost"
                 >
                   Use Code
                 </button>
                 <button
                   onClick={handleSeedInvite}
                   disabled={isLoading}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  className="flex-1 btn-neon"
                 >
-                  {isLoading ? 'Generating...' : 'Generate New'}
+                  {isLoading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                      Generating...
+                    </span>
+                  ) : 'Generate New'}
                 </button>
               </div>
 
@@ -191,16 +192,16 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
           {step === 'register' && (
             <div className="space-y-4">
               {generatedCode && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                  <p className="text-sm text-green-800">
-                    <span className="font-medium">Invite Code:</span>{' '}
-                    <code className="bg-green-100 px-1 rounded">{generatedCode}</code>
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <p className="text-sm text-emerald-800">
+                    <span className="font-semibold">✓ Invite Code:</span>{' '}
+                    <code className="bg-emerald-100 px-2 py-0.5 rounded font-mono">{generatedCode}</code>
                   </p>
                 </div>
               )}
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Username
                 </label>
                 <input
@@ -208,12 +209,12 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Choose a username"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input-dark w-full"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Email
                 </label>
                 <input
@@ -221,46 +222,52 @@ export default function SeedLoginModal({ isOpen, onClose }: SeedLoginModalProps)
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="your@email.com"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input-dark w-full"
                 />
               </div>
 
               <div className="flex space-x-3">
                 <button
                   onClick={() => setStep('invite')}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  className="btn-ghost"
                 >
                   Back
                 </button>
                 <button
                   onClick={handleRegister}
                   disabled={isLoading}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  className="flex-1 btn-neon"
                 >
-                  {isLoading ? 'Registering...' : 'Register'}
+                  {isLoading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                      Registering...
+                    </span>
+                  ) : 'Register'}
                 </button>
               </div>
             </div>
           )}
 
           {step === 'success' && (
-            <div className="text-center py-4">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="text-center py-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/30 animate-bounce">
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-gray-600">Redirecting to dashboard...</p>
+              <p className="text-gray-900 font-bold text-lg mb-1">You're all set!</p>
+              <p className="text-gray-500 text-sm">Redirecting to dashboard...</p>
             </div>
           )}
         </div>
 
         {/* Footer */}
         {step !== 'success' && (
-          <div className="bg-gray-50 px-6 py-3 border-t">
+          <div className="border-t border-gray-100 px-6 py-4 bg-gray-50">
             <button
               onClick={onClose}
-              className="text-sm text-gray-500 hover:text-gray-700"
+              className="text-sm text-gray-500 hover:text-gray-700 font-medium transition-colors"
             >
               Cancel
             </button>
