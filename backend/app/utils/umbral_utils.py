@@ -78,7 +78,8 @@ def generate_keys(key_dir: str = "./keys") -> Tuple[str, str]:
     secret_key = SecretKey.random()
     public_key = secret_key.public_key()
     
-    secret_key_bytes = bytes(secret_key)
+    # Use to_secret_bytes() for SecretKey, bytes() for PublicKey
+    secret_key_bytes = secret_key.to_secret_bytes()
     public_key_bytes = bytes(public_key)
     
     secret_key_path = os.path.join(key_dir, "secret_key.bin")
@@ -111,7 +112,7 @@ def generate_signing_key(key_dir: str = "./keys") -> Tuple[str, str]:
     
     signing_key_path = os.path.join(key_dir, "signing_key.bin")
     with open(signing_key_path, "wb") as f:
-        f.write(bytes(signing_key))
+        f.write(signing_key.to_secret_bytes())
     os.chmod(signing_key_path, 0o600)
     
     return signing_key_path, bytes(verifying_key).hex()
@@ -315,7 +316,8 @@ def generate_reenc_key(
         shares=shares,
     )
     
-    return bytes(kfrags[0]).hex()
+    # kfrags[0] is VerifiedKeyFrag, need inner .kfrag for serialization
+    return bytes(kfrags[0].kfrag).hex()
 
 
 def generate_reenc_keys_multiple(
@@ -354,7 +356,8 @@ def generate_reenc_keys_multiple(
         shares=shares,
     )
     
-    return [bytes(kfrag).hex() for kfrag in kfrags]
+    # kfrags are VerifiedKeyFrag, need inner .kfrag for serialization
+    return [bytes(kfrag.kfrag).hex() for kfrag in kfrags]
 
 
 def reencrypt_capsule(
@@ -362,6 +365,7 @@ def reencrypt_capsule(
     kfrag_hex: str,
     delegating_pk_hex: str,
     verifying_pk_hex: str,
+    receiving_pk_hex: Optional[str] = None,
 ) -> str:
     """
     Re-encrypt a capsule using a kfrag with explicit keys.
@@ -371,6 +375,7 @@ def reencrypt_capsule(
         kfrag_hex: Re-encryption key fragment (hex string)
         delegating_pk_hex: Granter's public key (hex string)
         verifying_pk_hex: Signing/verifying public key (hex string)
+        receiving_pk_hex: Grantee's public key (hex string) - required for verification
 
     Returns:
         Hex-encoded cfrag (ciphertext fragment)
@@ -383,10 +388,13 @@ def reencrypt_capsule(
     delegating_pk = load_public_key(delegating_pk_hex)
     verifying_pk = load_public_key(verifying_pk_hex)
     
+    # receiving_pk is required for kfrag verification
+    receiving_pk = load_public_key(receiving_pk_hex) if receiving_pk_hex else None
+    
     verified_kfrag = kfrag.verify(
         verifying_pk=verifying_pk,
         delegating_pk=delegating_pk,
-        receiving_pk=None,
+        receiving_pk=receiving_pk,
     )
     
     cfrag = umbral_reencrypt(capsule, verified_kfrag)

@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.routes import auth, grants, upload, audit
+from app.routes import auth, grants, upload, audit, access
 
 # Load environment variables from .env file
 # Check multiple locations: current dir, parent dir, workspace root
@@ -72,6 +72,7 @@ app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(upload.router, prefix="/upload", tags=["Upload"])
 app.include_router(grants.router, prefix="/grant", tags=["Grants"])
 app.include_router(audit.router, prefix="/audit", tags=["Audit"])
+app.include_router(access.router, prefix="/access", tags=["Access Management"])
 
 
 @app.get("/")

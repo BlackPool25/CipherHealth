@@ -23,9 +23,11 @@ export default function Navbar() {
 
   const navLinks = [
     { href: '/dashboard', label: 'Dashboard' },
+    { href: '/files', label: 'Files' },
     { href: '/upload', label: 'Upload' },
-    { href: '/grant-access', label: 'Grant Access' },
+    { href: '/access-requests', label: 'Access Management' },
     { href: '/audit', label: 'Audit' },
+    { href: '/profile', label: 'Profile' },
   ];
 
   return (

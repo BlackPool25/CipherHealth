@@ -28,6 +28,7 @@ from app.db import (
     get_invite_code,
     get_user_by_id,
     get_user_by_username,
+    update_user_public_key,
     use_invite_code,
 )
 
@@ -458,3 +459,59 @@ async def logout():
         Success message.
     """
     return {"message": "Logged out successfully. Please delete the token client-side."}
+
+
+class UpdatePublicKeyRequest(BaseModel):
+    """Request to update user's Umbral public key."""
+    public_key: str
+
+
+@router.post("/update-public-key")
+async def update_public_key(
+    request: UpdatePublicKeyRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Update the current user's Umbral public key.
+    
+    This allows users to register or update their public key for
+    proxy re-encryption operations.
+    
+    Args:
+        request: New public key (hex encoded)
+        current_user: Authenticated user
+        
+    Returns:
+        Success message with the registered key
+    """
+    # Basic validation - Umbral public keys are 33 bytes (66 hex chars)
+    if not request.public_key or len(request.public_key) < 64:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid public key format. Expected hex-encoded Umbral public key.",
+        )
+    
+    # Try to validate it's valid hex
+    try:
+        bytes.fromhex(request.public_key)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid public key format. Must be hex-encoded.",
+        )
+    
+    success = await update_user_public_key(
+        user_id=current_user["id"],
+        public_key=request.public_key,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update public key",
+        )
+    
+    return {
+        "message": "Public key updated successfully",
+        "public_key": request.public_key,
+    }

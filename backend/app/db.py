@@ -87,6 +87,39 @@ class GrantResponse(BaseModel):
     tx_hash: Optional[str] = None  # On-chain transaction hash
 
 
+class AccessRequestStatus(str, Enum):
+    """Status of an access request."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+
+
+class AccessRequestCreate(BaseModel):
+    """Schema for creating an access request."""
+
+    cid: str
+    requester_pubkey: str
+    purpose: str
+
+
+class AccessRequestResponse(BaseModel):
+    """Schema for access request response."""
+
+    id: int
+    cid: str
+    requester_pubkey: str
+    purpose: str
+    status: AccessRequestStatus
+    created_at: str
+    owner_id: Optional[int] = None
+    expires_at: Optional[str] = None
+    kfrags_encrypted: Optional[str] = None  # Encrypted kfrags metadata
+    verifying_key: Optional[str] = None  # Signer's public key for kfrag verification
+    tx_hash: Optional[str] = None
+
+
 class InviteCode(BaseModel):
     """Schema for invite code."""
 
@@ -165,6 +198,30 @@ async def init_db():
             )
         """)
 
+        # Access requests table - for client-side-first workflow
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cid TEXT NOT NULL,
+                requester_pubkey TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                owner_id INTEGER,
+                expires_at TIMESTAMP,
+                kfrags_encrypted TEXT,
+                verifying_key TEXT,
+                tx_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_id) REFERENCES users(id)
+            )
+        """)
+
+        # Add verifying_key column if it doesn't exist (migration for existing DBs)
+        try:
+            await db.execute("ALTER TABLE access_requests ADD COLUMN verifying_key TEXT")
+        except Exception:
+            pass  # Column already exists
+
         await db.commit()
         print("Database initialized successfully.")
 
@@ -209,6 +266,22 @@ async def get_user_by_username(username: str) -> Optional[dict]:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+async def update_user_public_key(user_id: int, public_key: str) -> bool:
+    """
+    Update a user's Umbral public key.
+    Returns True if successful.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE users SET public_key = ? WHERE id = ?
+            """,
+            (public_key, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 # ============================================================================
@@ -392,3 +465,152 @@ async def get_grants_by_granter(granter_id: int) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+# ============================================================================
+# Database Operations - Access Requests
+# ============================================================================
+
+
+async def create_access_request(
+    cid: str,
+    requester_pubkey: str,
+    purpose: str,
+    owner_id: Optional[int] = None,
+) -> int:
+    """
+    Create a new access request.
+    Returns the request ID.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO access_requests (cid, requester_pubkey, purpose, status, owner_id)
+            VALUES (?, ?, ?, 'pending', ?)
+            """,
+            (cid, requester_pubkey, purpose, owner_id),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_access_request_by_id(request_id: int) -> Optional[dict]:
+    """Get an access request by ID."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM access_requests WHERE id = ?", (request_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_access_requests_by_cid(cid: str) -> list[dict]:
+    """Get all access requests for a specific CID."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM access_requests WHERE cid = ?", (cid,)
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_pending_requests_for_owner(owner_id: int) -> list[dict]:
+    """Get all pending access requests for files owned by a user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT ar.* FROM access_requests ar
+            JOIN files f ON ar.cid = f.cid
+            WHERE f.owner_id = ? AND ar.status = 'pending'
+            ORDER BY ar.created_at DESC
+            """,
+            (owner_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def approve_access_request(
+    request_id: int,
+    kfrags_encrypted: str,
+    expires_at: Optional[str] = None,
+    tx_hash: Optional[str] = None,
+    verifying_key: Optional[str] = None,
+) -> bool:
+    """
+    Approve an access request and store encrypted kfrags.
+    Returns True if successful.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE access_requests
+            SET status = 'approved', kfrags_encrypted = ?, expires_at = ?, tx_hash = ?, verifying_key = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (kfrags_encrypted, expires_at, tx_hash, verifying_key, request_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def deny_access_request(request_id: int) -> bool:
+    """
+    Deny an access request.
+    Returns True if successful.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE access_requests
+            SET status = 'denied'
+            WHERE id = ? AND status = 'pending'
+            """,
+            (request_id,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_approved_request_by_cid_and_pubkey(
+    cid: str,
+    requester_pubkey: str,
+) -> Optional[dict]:
+    """Get an approved access request for a specific CID and requester."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM access_requests
+            WHERE cid = ? AND requester_pubkey = ? AND status = 'approved'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (cid, requester_pubkey),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_file_tx_hash(file_id: int, tx_hash: str) -> bool:
+    """
+    Update a file record with its on-chain transaction hash.
+    Returns True if successful.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # First check if tx_hash column exists, add it if not
+        cursor = await db.execute("PRAGMA table_info(files)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        
+        if "tx_hash" not in columns:
+            await db.execute("ALTER TABLE files ADD COLUMN tx_hash TEXT")
+        
+        cursor = await db.execute(
+            "UPDATE files SET tx_hash = ? WHERE id = ?",
+            (tx_hash, file_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
