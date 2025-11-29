@@ -13,6 +13,7 @@ import Link from 'next/link';
 import Layout from '@/components/Layout';
 import NetworkCheck from '@/components/NetworkCheck';
 import CidDisplay from '@/components/CidDisplay';
+import FileViewer from '@/components/FileViewer';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
 import { listFiles, listGrants } from '@/lib/api';
@@ -31,6 +32,12 @@ interface Grant {
   status: string;
 }
 
+interface SelectedFile {
+  id: number;
+  filename: string;
+  cid: string;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -40,6 +47,7 @@ export default function DashboardPage() {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [isLoadingGrants, setIsLoadingGrants] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -164,18 +172,30 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {files.slice(0, 3).map((file) => (
-              <div key={file.id} className="border rounded-lg p-4">
+            {files.slice(0, 5).map((file) => (
+              <div key={file.id} className="border rounded-lg p-4 hover:border-blue-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium text-gray-900">{file.filename}</span>
-                  <span className="text-xs text-gray-500">{file.created_at}</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs text-gray-500">{file.created_at}</span>
+                    <button
+                      onClick={() => setSelectedFile({ id: file.id, filename: file.filename, cid: file.cid })}
+                      className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center"
+                    >
+                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      View
+                    </button>
+                  </div>
                 </div>
                 <CidDisplay cid={file.cid} showGatewayLink={false} />
               </div>
             ))}
-            {files.length > 3 && (
+            {files.length > 5 && (
               <p className="text-sm text-gray-500 text-center">
-                And {files.length - 3} more records...
+                And {files.length - 5} more records...
               </p>
             )}
           </div>
@@ -230,6 +250,16 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* File Viewer Modal */}
+      {selectedFile && (
+        <FileViewer
+          fileId={selectedFile.id}
+          filename={selectedFile.filename}
+          cid={selectedFile.cid}
+          onClose={() => setSelectedFile(null)}
+        />
+      )}
     </Layout>
   );
 }

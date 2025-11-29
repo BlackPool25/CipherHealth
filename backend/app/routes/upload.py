@@ -23,7 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id
+from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id, get_file_by_id
 from app.routes.auth import get_current_user_from_token
 from app.utils.storage import upload_to_storacha, upload_bytes_to_storacha, is_valid_cid
 from app.utils.umbral_utils import (
@@ -179,12 +179,13 @@ async def upload_file(
                 detail="Failed to get valid CID from Storacha",
             )
         
-        # Create file record in database
+        # Create file record in database (include capsule for re-encryption)
         file_record = FileRecord(
             cid=cid,
             owner_id=patient_id,
             filename=filename,
             encrypted_cek=cek_ciphertext,
+            capsule=capsule_hex,
         )
         file_id = await create_file_record(file_record)
         
@@ -386,3 +387,191 @@ async def list_files(user_id: int):
         files=files,
         count=len(files),
     )
+
+
+class DownloadRequest(BaseModel):
+    """Request to download and decrypt a file."""
+    
+    file_id: int
+    owner_private_key: Optional[str] = None  # Hex-encoded (for owner decryption)
+    grant_id: Optional[int] = None  # For grantee access via re-encryption
+
+
+class DownloadResponse(BaseModel):
+    """Response with decrypted file data."""
+    
+    filename: str
+    content_base64: str  # Base64-encoded decrypted content
+    content_type: str
+    size: int
+    message: str
+
+
+@router.post("/download", response_model=DownloadResponse)
+async def download_and_decrypt(request: DownloadRequest):
+    """
+    Download encrypted file from Storacha and decrypt it.
+    
+    For owners: provide owner_private_key to decrypt directly.
+    For grantees: provide grant_id to use re-encryption.
+    
+    Args:
+        request: Download request with file ID and decryption method
+        
+    Returns:
+        Decrypted file content as base64
+        
+    Example curl (owner):
+        curl -X POST http://localhost:8000/upload/download \\
+          -H "Content-Type: application/json" \\
+          -d '{"file_id": 1, "owner_private_key": "<hex>"}'
+    """
+    import base64
+    import mimetypes
+    from app.storage import download_blob
+    from app.utils.umbral_utils import decrypt_with_cek
+    
+    # Get file record
+    file_record = await get_file_by_id(request.file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+    
+    cid = file_record.get("cid")
+    filename = file_record.get("filename", "unknown")
+    encrypted_cek = file_record.get("encrypted_cek")
+    capsule = file_record.get("capsule")  # May be stored in DB
+    
+    if not cid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File has no CID",
+        )
+    
+    try:
+        # Download encrypted blob from Storacha/IPFS
+        encrypted_blob = download_blob(cid)
+        
+        # Extract nonce (first 12 bytes) and ciphertext
+        nonce = encrypted_blob[:12]
+        ciphertext = encrypted_blob[12:]
+        
+        # For now, we need to implement the full decryption flow
+        # This requires either owner's private key or grant-based re-encryption
+        
+        if request.owner_private_key:
+            # Owner decryption - need capsule and encrypted_cek from upload
+            # The capsule should be stored in the file record or returned at upload
+            
+            # For basic demo, we'll decrypt using the stored encrypted_cek
+            # In production, this would use Umbral capsule decryption
+            
+            from umbral import SecretKey, Capsule, decrypt_original
+            from app.utils.umbral_utils import load_public_key
+            
+            # Decode owner's private key
+            owner_sk = SecretKey.from_bytes(bytes.fromhex(request.owner_private_key))
+            
+            # If we have a capsule, use Umbral decryption
+            if capsule:
+                capsule_bytes = bytes.fromhex(capsule) if isinstance(capsule, str) else capsule
+                capsule_obj = Capsule.from_bytes(capsule_bytes)
+                encrypted_cek_bytes = bytes.fromhex(encrypted_cek)
+                
+                # Decrypt CEK using Umbral
+                cek = decrypt_original(owner_sk, capsule_obj, encrypted_cek_bytes)
+            else:
+                # Fallback: encrypted_cek might just be hex CEK (dev mode)
+                cek = bytes.fromhex(encrypted_cek)
+            
+            # Decrypt content with CEK
+            decrypted = decrypt_with_cek(ciphertext, cek, nonce)
+            
+        elif request.grant_id:
+            # Grantee decryption via re-encryption
+            # This would call the grant/redeem flow
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Grant-based decryption not yet implemented in this endpoint. Use /grant/redeem.",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Must provide owner_private_key or grant_id",
+            )
+        
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = "application/octet-stream"
+        
+        # Encode as base64 for JSON response
+        content_b64 = base64.b64encode(decrypted).decode("utf-8")
+        
+        return DownloadResponse(
+            filename=filename,
+            content_base64=content_b64,
+            content_type=content_type,
+            size=len(decrypted),
+            message="File decrypted successfully",
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Download/decrypt failed: {str(e)}",
+        )
+
+
+@router.get("/download/{file_id}")
+async def download_encrypted_raw(file_id: int):
+    """
+    Download the raw encrypted blob from Storacha (for client-side decryption).
+    
+    Returns the encrypted file as-is, for cases where decryption happens in the browser.
+    
+    Args:
+        file_id: ID of the file to download
+        
+    Returns:
+        JSON with encrypted content and metadata needed for decryption
+    """
+    import base64
+    from app.storage import download_blob
+    
+    file_record = await get_file_by_id(file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+    
+    cid = file_record.get("cid")
+    if not cid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File has no CID",
+        )
+    
+    try:
+        encrypted_blob = download_blob(cid)
+        
+        return {
+            "file_id": file_id,
+            "filename": file_record.get("filename"),
+            "cid": cid,
+            "encrypted_blob_base64": base64.b64encode(encrypted_blob).decode("utf-8"),
+            "encrypted_cek": file_record.get("encrypted_cek"),
+            "capsule": file_record.get("capsule"),
+            "size": len(encrypted_blob),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Download failed: {str(e)}",
+        )
+

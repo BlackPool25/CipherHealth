@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from typing import Optional
 import logging
 
@@ -77,26 +78,24 @@ class StorachaVerificationError(StorachaError):
     pass
 
 
-def _check_configuration() -> tuple[str, str, str]:
+def _check_configuration() -> tuple[Optional[str], str, str]:
     """
     Check that required environment variables are set.
     
     Returns:
         Tuple of (principal, proof, gateway_url)
+        Note: principal is optional - the proof contains delegation info
     
     Raises:
-        StorachaConfigError if required variables are missing.
+        StorachaConfigError if proof is missing.
     """
-    principal = os.environ.get("STORACHA_PRINCIPAL")
+    principal = os.environ.get("STORACHA_PRINCIPAL")  # Optional now
     proof = os.environ.get("STORACHA_PROOF")
     gateway_url = os.environ.get("STORACHA_GATEWAY_URL", DEFAULT_GATEWAY_URL)
     
-    if not principal:
-        print("Set STORACHA_PRINCIPAL in .env", file=sys.stderr)
-        raise StorachaConfigError(
-            "STORACHA_PRINCIPAL not set. "
-            "Generate with: storacha key create --json"
-        )
+    # Principal is optional - the proof contains the delegation
+    if principal:
+        logger.debug("STORACHA_PRINCIPAL is set (will be ignored, using proof-based auth)")
     
     if not proof:
         print("Set STORACHA_PROOF in .env", file=sys.stderr)
@@ -141,6 +140,11 @@ def upload_blob(bytes_data: bytes, filename: str) -> dict:
     Uses the Storacha CLI for upload (official supported method for backend).
     Implements retry logic with exponential backoff.
     
+    The CLI uses the already-logged-in principal from ~/.config/w3access/.
+    Run `storacha login` and `storacha space create` to set up before first use.
+    
+    Reference: https://docs.storacha.network/how-to/ci/
+    
     Args:
         bytes_data: The bytes to upload
         filename: Original filename (preserved in IPFS directory)
@@ -151,147 +155,133 @@ def upload_blob(bytes_data: bytes, filename: str) -> dict:
             - size: Size in bytes
     
     Raises:
-        StorachaConfigError: If environment variables not configured
+        StorachaConfigError: If CLI not logged in
         StorachaUploadError: If upload fails after retries
         StorachaVerificationError: If post-upload verification fails
     """
-    # Check configuration
-    principal, proof, gateway_url = _check_configuration()
-    
     # Check CLI is installed
     if not _check_cli_installed():
         raise StorachaError(
             "Storacha CLI not installed. Install with: npm install -g @storacha/cli"
         )
     
+    # Check that CLI is logged in (has a current space)
+    try:
+        # Create clean environment without STORACHA_PRINCIPAL to avoid conflicts
+        # with the locally logged-in principal
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("STORACHA_PRINCIPAL")}
+        
+        whoami_result = subprocess.run(
+            ["storacha", "whoami"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=clean_env
+        )
+        if whoami_result.returncode != 0 or "did:key" not in whoami_result.stdout:
+            raise StorachaConfigError(
+                f"Storacha CLI not logged in. Run: storacha login <email>. Error: {whoami_result.stderr}"
+            )
+        logger.debug(f"Using agent: {whoami_result.stdout.strip()}")
+        
+        # Check current space
+        space_result = subprocess.run(
+            ["storacha", "space", "ls"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=clean_env
+        )
+        if space_result.returncode != 0 or not space_result.stdout.strip():
+            raise StorachaConfigError(
+                "No Storacha space available. Run: storacha space create <name>"
+            )
+        logger.debug(f"Available spaces:\n{space_result.stdout.strip()}")
+    except subprocess.TimeoutExpired:
+        raise StorachaError("Storacha CLI timed out checking configuration")
+    
     size = len(bytes_data)
     original_hash = _compute_sha256(bytes_data)
     
     logger.info(f"Uploading {filename} ({size} bytes) to Storacha...")
     
+    # Create clean environment without STORACHA_PRINCIPAL to avoid conflicts
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("STORACHA_PRINCIPAL")}
+    
     last_error = None
     
     for attempt in range(MAX_RETRIES):
-        # Create a temporary directory for isolated CLI state
-        # This avoids conflicts with any existing stored principal
-        with tempfile.TemporaryDirectory(prefix="storacha_") as temp_store_dir:
+        try:
+            # Create temporary file for upload
+            with tempfile.NamedTemporaryFile(
+                mode='wb',
+                suffix=f"_{filename}",
+                delete=False
+            ) as tmp_file:
+                tmp_file.write(bytes_data)
+                tmp_path = tmp_file.name
+            
             try:
-                # Create temporary file for upload
-                with tempfile.NamedTemporaryFile(
-                    mode='wb',
-                    suffix=f"_{filename}",
-                    delete=False,
-                    dir=temp_store_dir
-                ) as tmp_file:
-                    tmp_file.write(bytes_data)
-                    tmp_path = tmp_file.name
-                
-                # Set up isolated environment with custom store path
-                cli_env = {
-                    **os.environ,
-                    "STORACHA_PRINCIPAL": principal,
-                    # Use XDG_CONFIG_HOME to isolate the CLI store
-                    "XDG_CONFIG_HOME": temp_store_dir,
-                    "HOME": temp_store_dir,  # Fallback for some systems
-                }
-                
-                try:
-                    # First, import the proof to set up the space
-                    import_result = subprocess.run(
-                        ["storacha", "space", "add", proof],
-                        capture_output=True,
-                        text=True,
-                        timeout=REQUEST_TIMEOUT,
-                        env=cli_env
-                    )
-                    
-                    if import_result.returncode != 0:
-                        # Log but don't fail - space might already be added
-                        logger.debug(f"Space add output: {import_result.stderr}")
-                    
-                    # Upload using CLI with JSON output
-                    # Use --no-wrap to get direct file CID (not wrapped in directory)
-                    result = subprocess.run(
-                        ["storacha", "up", tmp_path, "--json", "--no-wrap"],
-                        capture_output=True,
-                        text=True,
-                        timeout=REQUEST_TIMEOUT,
-                        env=cli_env
-                    )
-                    
-                    if result.returncode != 0:
-                        raise StorachaUploadError(
-                            f"CLI upload failed: {result.stderr}"
-                        )
-                    
-                    # Parse JSON output to get CID
-                    try:
-                        output = json.loads(result.stdout)
-                        # The CLI outputs {"root": {"/": "<cid>"}}
-                        if isinstance(output, dict) and "root" in output:
-                            root = output["root"]
-                            if isinstance(root, dict) and "/" in root:
-                                cid = root["/"]
-                            else:
-                                cid = str(root)
-                        else:
-                            # Try to extract CID from stdout
-                            cid = result.stdout.strip()
-                    except json.JSONDecodeError:
-                        # If not JSON, try to extract CID from output
-                        # CLI might output URL like https://storacha.link/ipfs/<cid>
-                        output_lines = result.stdout.strip().split('\n')
-                        for line in output_lines:
-                            if "ipfs/" in line:
-                                cid = line.split("ipfs/")[-1].split()[0]
-                                break
-                            elif line.startswith("bafy"):
-                                cid = line.strip()
-                                break
-                        else:
-                            raise StorachaUploadError(
-                                f"Could not parse CID from output: {result.stdout}"
-                            )
-                    
-                    logger.info(f"Upload successful. CID: {cid}")
-                    
-                    # Verify upload by downloading and checking hash
-                    logger.info("Verifying upload integrity...")
-                    try:
-                        downloaded = download_blob(cid)
-                        downloaded_hash = _compute_sha256(downloaded)
-                        
-                        if downloaded_hash != original_hash:
-                            raise StorachaVerificationError(
-                                f"Hash mismatch after upload. "
-                                f"Original: {original_hash}, Downloaded: {downloaded_hash}"
-                            )
-                        
-                        logger.info("Verification successful.")
-                    except StorachaDownloadError as e:
-                        # Verification download failed - might need to wait for propagation
-                        logger.warning(
-                            f"Could not verify upload immediately: {e}. "
-                            "Content may still be propagating."
-                        )
-                    
-                    return {"cid": cid, "size": size}
-                    
-                finally:
-                    # Clean up temp file
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-                        
-            except subprocess.TimeoutExpired:
-                last_error = StorachaUploadError(
-                    f"Upload timed out after {REQUEST_TIMEOUT}s"
+                # Upload using CLI with JSON output
+                # Use --no-wrap to get direct file CID (not wrapped in directory)
+                logger.debug(f"Uploading file: {tmp_path}")
+                result = subprocess.run(
+                    ["storacha", "up", tmp_path, "--json", "--no-wrap"],
+                    capture_output=True,
+                    text=True,
+                    timeout=REQUEST_TIMEOUT,
+                    env=clean_env
                 )
-            except StorachaVerificationError:
-                raise  # Don't retry verification failures
-            except Exception as e:
-                last_error = StorachaUploadError(f"Upload failed: {e}")
+                
+                if result.returncode != 0:
+                    raise StorachaUploadError(
+                        f"CLI upload failed: {result.stderr}"
+                    )
+                
+                # Parse JSON output to get CID
+                cid = _parse_upload_output(result.stdout)
+                
+                logger.info(f"Upload successful. CID: {cid}")
+                
+                # Verify upload by downloading and checking hash
+                logger.info("Verifying upload integrity...")
+                try:
+                    # Wait a bit for propagation
+                    time.sleep(2)
+                    downloaded = download_blob(cid)
+                    downloaded_hash = _compute_sha256(downloaded)
+                    
+                    if downloaded_hash != original_hash:
+                        raise StorachaVerificationError(
+                            f"Hash mismatch after upload. "
+                            f"Original: {original_hash}, Downloaded: {downloaded_hash}"
+                        )
+                    
+                    logger.info("Verification successful.")
+                except StorachaDownloadError as e:
+                    # Verification download failed - might need to wait for propagation
+                    logger.warning(
+                        f"Could not verify upload immediately: {e}. "
+                        "Content may still be propagating."
+                    )
+                
+                return {"cid": cid, "size": size}
+                
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                        
+        except subprocess.TimeoutExpired:
+            last_error = StorachaUploadError(
+                f"Upload timed out after {REQUEST_TIMEOUT}s"
+            )
+        except StorachaVerificationError:
+            raise  # Don't retry verification failures
+        except Exception as e:
+            last_error = StorachaUploadError(f"Upload failed: {e}")
         
         if attempt < MAX_RETRIES - 1:
             delay = _exponential_backoff(attempt)
@@ -302,6 +292,52 @@ def upload_blob(bytes_data: bytes, filename: str) -> dict:
             time.sleep(delay)
     
     raise last_error or StorachaUploadError("Upload failed after all retries")
+
+
+def _parse_upload_output(stdout: str) -> str:
+    """
+    Parse the CID from storacha CLI upload output.
+    
+    The CLI outputs JSON like: {"root": {"/": "<cid>"}}
+    Or may output a URL like: https://bafyxxx.ipfs.storacha.link
+    """
+    stdout = stdout.strip()
+    
+    # Try JSON parse first
+    try:
+        output = json.loads(stdout)
+        # The CLI outputs {"root": {"/": "<cid>"}}
+        if isinstance(output, dict) and "root" in output:
+            root = output["root"]
+            if isinstance(root, dict) and "/" in root:
+                return root["/"]
+            else:
+                return str(root)
+        elif isinstance(output, str):
+            return output
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to extract CID from output lines
+    for line in stdout.split('\n'):
+        line = line.strip()
+        # URL format: https://bafyxxx.ipfs.storacha.link
+        if "ipfs.storacha.link" in line or "ipfs.w3s.link" in line:
+            # Extract CID from subdomain
+            import re
+            match = re.search(r'https://([^.]+)\.ipfs\.', line)
+            if match:
+                return match.group(1)
+        # Path format: https://storacha.link/ipfs/<cid>
+        if "ipfs/" in line:
+            cid = line.split("ipfs/")[-1].split()[0].split("?")[0]
+            if cid.startswith("bafy"):
+                return cid
+        # Raw CID
+        if line.startswith("bafy"):
+            return line.split()[0]
+    
+    raise StorachaUploadError(f"Could not parse CID from output: {stdout}")
 
 
 def download_blob(cid: str) -> bytes:

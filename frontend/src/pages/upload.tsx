@@ -15,12 +15,14 @@ import CidDisplay from '@/components/CidDisplay';
 import TxHashDisplay from '@/components/TxHashDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
-import { encryptFile, pinFile } from '@/lib/api';
+import { uploadFile, encryptFile, pinFile } from '@/lib/api';
 
 interface UploadResult {
   cid: string;
   txHash?: string;
   filename: string;
+  fileId?: number;
+  capsule?: string;
 }
 
 export default function UploadPage() {
@@ -73,41 +75,31 @@ export default function UploadPage() {
     setError('');
 
     try {
-      // Step 1: Encrypt the file
+      // Use the direct single-step upload endpoint
       setUploadStep('encrypting');
-      const encryptResult = await encryptFile(selectedFile, user.id, user.public_key);
       
-      if (encryptResult.error) {
-        throw new Error(encryptResult.error);
+      const uploadResult = await uploadFile(selectedFile, user.id, user.public_key);
+      
+      if (uploadResult.error) {
+        throw new Error(uploadResult.error);
       }
 
-      if (!encryptResult.data) {
-        throw new Error('Encryption failed');
+      if (!uploadResult.data) {
+        throw new Error('Upload failed');
       }
 
-      // Step 2: Pin to IPFS
       setUploadStep('pinning');
-      const pinResult = await pinFile({
-        temp_file_id: encryptResult.data.temp_file_id,
-        owner_id: user.id,
-        original_filename: encryptResult.data.original_filename,
-        encrypted_cek: encryptResult.data.cek_ciphertext,
-      });
-
-      if (pinResult.error) {
-        throw new Error(pinResult.error);
-      }
-
-      if (!pinResult.data) {
-        throw new Error('Pinning failed');
-      }
+      // Small delay for UI feedback
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Success!
       setUploadStep('complete');
       setResult({
-        cid: pinResult.data.cid,
+        cid: uploadResult.data.cid,
         txHash: '0x' + 'a'.repeat(64), // Demo tx hash - would come from blockchain in production
-        filename: pinResult.data.filename,
+        filename: uploadResult.data.filename,
+        fileId: uploadResult.data.file_id,
+        capsule: uploadResult.data.capsule,
       });
 
     } catch (err) {

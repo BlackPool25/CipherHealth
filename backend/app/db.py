@@ -60,6 +60,7 @@ class FileRecord(BaseModel):
     owner_id: int
     filename: str
     encrypted_cek: Optional[str] = None  # CEK encrypted with owner's public key
+    capsule: Optional[str] = None  # Umbral capsule for re-encryption (hex)
     created_at: Optional[str] = None
 
 
@@ -140,6 +141,7 @@ async def init_db():
                 owner_id INTEGER NOT NULL,
                 filename TEXT NOT NULL,
                 encrypted_cek TEXT,
+                capsule TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_id) REFERENCES users(id)
             )
@@ -273,10 +275,10 @@ async def create_file_record(file: FileRecord) -> int:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO files (cid, owner_id, filename, encrypted_cek)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO files (cid, owner_id, filename, encrypted_cek, capsule)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (file.cid, file.owner_id, file.filename, file.encrypted_cek),
+            (file.cid, file.owner_id, file.filename, file.encrypted_cek, file.capsule),
         )
         await db.commit()
         return cursor.lastrowid
