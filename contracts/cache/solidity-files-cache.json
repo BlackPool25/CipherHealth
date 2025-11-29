@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "/home/lightdesk/Projects/Decent-Hospital/contracts/contracts/HealthRecords.sol": {
-      "lastModificationDate": 1764393535049,
-      "contentHash": "dd53b675d3f4026e6e3ddf7c6732b602",
+      "lastModificationDate": 1764432323271,
+      "contentHash": "3c16361254f16291435a33e76951ecad",
       "sourceName": "contracts/HealthRecords.sol",
       "solcConfig": {
         "version": "0.8.20",

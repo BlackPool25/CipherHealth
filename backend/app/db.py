@@ -503,6 +503,42 @@ async def get_grants_by_granter(granter_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+async def get_grants_for_file(file_id: int) -> list[dict]:
+    """
+    Get all grants for a specific file.
+    
+    Used for revocation to find all grants that need to be invalidated.
+    
+    Args:
+        file_id: ID of the file
+        
+    Returns:
+        List of grant dictionaries
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT 
+                g.id,
+                g.file_id,
+                g.granter_id,
+                g.grantee_id,
+                g.reencryption_key,
+                g.expires_at,
+                g.status,
+                g.tx_hash,
+                g.created_at
+            FROM grants g
+            WHERE g.file_id = ?
+            ORDER BY g.created_at DESC
+            """,
+            (file_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 # ============================================================================
 # Database Operations - Access Requests
 # ============================================================================

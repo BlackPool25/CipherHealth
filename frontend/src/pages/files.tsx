@@ -105,6 +105,9 @@ export default function FilesPage() {
   const handleShareFile = (file: FileRecord) => {
     router.push(`/access-requests?tab=grant&fileId=${file.id}`);
   };
+  const handleRevokeFile = (file: FileRecord) => {
+    router.push(`/revoke?cid=${file.cid}`);
+  };
 
   if (authLoading) {
     return (
@@ -245,6 +248,13 @@ export default function FilesPage() {
                     >
                       Share
                     </button>
+                    <button
+                      onClick={() => handleRevokeFile(file)}
+                      className="btn-ghost text-sm py-2 px-3 text-rose-600 hover:text-rose-700"
+                      title="Revoke access and rotate encryption key"
+                    >
+                      🔄
+                    </button>
                   </div>
                 </div>
               );
@@ -271,6 +281,13 @@ export default function FilesPage() {
                       </button>
                       <button onClick={() => handleShareFile(file)} className="btn-ghost text-sm py-2 px-3">
                         Share
+                      </button>
+                      <button 
+                        onClick={() => handleRevokeFile(file)} 
+                        className="btn-ghost text-sm py-2 px-3 text-rose-600 hover:text-rose-700"
+                        title="Revoke access and rotate encryption key"
+                      >
+                        🔄
                       </button>
                     </div>
                   </div>

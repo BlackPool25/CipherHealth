@@ -15,13 +15,16 @@ interface TxHashDisplayProps {
 export default function TxHashDisplay({ txHash, label = 'Transaction', status = 'confirmed' }: TxHashDisplayProps) {
   const [copied, setCopied] = useState(false);
 
+  // Ensure tx hash has 0x prefix for Etherscan compatibility
+  const normalizedTxHash = txHash.startsWith('0x') ? txHash : `0x${txHash}`;
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(txHash);
+    await navigator.clipboard.writeText(normalizedTxHash);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const etherscanUrl = `${SEPOLIA_ETHERSCAN_TX}/${txHash}`;
+  const etherscanUrl = `${SEPOLIA_ETHERSCAN_TX}/${normalizedTxHash}`;
 
   const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800',
@@ -52,7 +55,7 @@ export default function TxHashDisplay({ txHash, label = 'Transaction', status = 
         </button>
       </div>
       <div className="font-mono text-sm text-gray-800 break-all bg-white p-2 rounded border">
-        {txHash}
+        {normalizedTxHash}
       </div>
       <a
         href={etherscanUrl}

@@ -26,27 +26,56 @@ import type {
 export interface HealthRecordsInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "computeCidHash"
+      | "getLatestGrant"
       | "getRecord"
+      | "grantAccessByHash"
       | "grants"
+      | "hashGrants"
       | "isGrantValid"
       | "recordGrant"
+      | "recordUpload"
       | "records"
+      | "revokeAccessByHash"
       | "revokeGrant"
       | "setRecord"
+      | "signalKeyRotation"
       | "viewGrant"
   ): FunctionFragment;
 
   getEvent(
-    nameOrSignatureOrTopic: "GrantRecorded" | "GrantRevoked" | "RecordUpdated"
+    nameOrSignatureOrTopic:
+      | "AccessGranted"
+      | "AccessRevoked"
+      | "GrantRecorded"
+      | "GrantRevoked"
+      | "RecordUpdated"
+      | "UploadRecorded"
   ): EventFragment;
 
+  encodeFunctionData(
+    functionFragment: "computeCidHash",
+    values: [string]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getLatestGrant",
+    values: [BytesLike]
+  ): string;
   encodeFunctionData(
     functionFragment: "getRecord",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "grantAccessByHash",
+    values: [BytesLike, AddressLike, BigNumberish]
+  ): string;
+  encodeFunctionData(
     functionFragment: "grants",
     values: [string, string]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "hashGrants",
+    values: [BytesLike]
   ): string;
   encodeFunctionData(
     functionFragment: "isGrantValid",
@@ -57,8 +86,16 @@ export interface HealthRecordsInterface extends Interface {
     values: [string, string, BigNumberish]
   ): string;
   encodeFunctionData(
+    functionFragment: "recordUpload",
+    values: [BytesLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "records",
     values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "revokeAccessByHash",
+    values: [BytesLike]
   ): string;
   encodeFunctionData(
     functionFragment: "revokeGrant",
@@ -66,12 +103,29 @@ export interface HealthRecordsInterface extends Interface {
   ): string;
   encodeFunctionData(functionFragment: "setRecord", values: [string]): string;
   encodeFunctionData(
+    functionFragment: "signalKeyRotation",
+    values: [BytesLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "viewGrant",
     values: [string, string]
   ): string;
 
+  decodeFunctionResult(
+    functionFragment: "computeCidHash",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getLatestGrant",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "getRecord", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "grantAccessByHash",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "grants", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "hashGrants", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "isGrantValid",
     data: BytesLike
@@ -80,13 +134,63 @@ export interface HealthRecordsInterface extends Interface {
     functionFragment: "recordGrant",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "recordUpload",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "records", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "revokeAccessByHash",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "revokeGrant",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "setRecord", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "signalKeyRotation",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "viewGrant", data: BytesLike): Result;
+}
+
+export namespace AccessGrantedEvent {
+  export type InputTuple = [
+    cidHash: BytesLike,
+    owner: AddressLike,
+    grantee: AddressLike,
+    expiry: BigNumberish
+  ];
+  export type OutputTuple = [
+    cidHash: string,
+    owner: string,
+    grantee: string,
+    expiry: bigint
+  ];
+  export interface OutputObject {
+    cidHash: string;
+    owner: string;
+    grantee: string;
+    expiry: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace AccessRevokedEvent {
+  export type InputTuple = [cidHash: BytesLike, owner: AddressLike];
+  export type OutputTuple = [cidHash: string, owner: string];
+  export interface OutputObject {
+    cidHash: string;
+    owner: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
 }
 
 export namespace GrantRecordedEvent {
@@ -149,6 +253,24 @@ export namespace RecordUpdatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace UploadRecordedEvent {
+  export type InputTuple = [
+    cidHash: BytesLike,
+    owner: AddressLike,
+    ts: BigNumberish
+  ];
+  export type OutputTuple = [cidHash: string, owner: string, ts: bigint];
+  export interface OutputObject {
+    cidHash: string;
+    owner: string;
+    ts: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export interface HealthRecords extends BaseContract {
   connect(runner?: ContractRunner | null): HealthRecords;
   waitForDeployment(): Promise<this>;
@@ -192,7 +314,27 @@ export interface HealthRecords extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  computeCidHash: TypedContractMethod<[cid: string], [string], "view">;
+
+  getLatestGrant: TypedContractMethod<
+    [cidHash: BytesLike],
+    [
+      [string, bigint, boolean] & {
+        grantee: string;
+        expiry: bigint;
+        active: boolean;
+      }
+    ],
+    "view"
+  >;
+
   getRecord: TypedContractMethod<[patient: AddressLike], [string], "view">;
+
+  grantAccessByHash: TypedContractMethod<
+    [cidHash: BytesLike, grantee: AddressLike, expiry: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   grants: TypedContractMethod<
     [arg0: string, arg1: string],
@@ -202,6 +344,19 @@ export interface HealthRecords extends BaseContract {
         expiryTimestamp: bigint;
         granter: string;
         createdAt: bigint;
+      }
+    ],
+    "view"
+  >;
+
+  hashGrants: TypedContractMethod<
+    [arg0: BytesLike],
+    [
+      [string, bigint, boolean, string] & {
+        grantee: string;
+        expiry: bigint;
+        active: boolean;
+        owner: string;
       }
     ],
     "view"
@@ -219,7 +374,15 @@ export interface HealthRecords extends BaseContract {
     "nonpayable"
   >;
 
+  recordUpload: TypedContractMethod<[cidHash: BytesLike], [void], "nonpayable">;
+
   records: TypedContractMethod<[arg0: AddressLike], [string], "view">;
+
+  revokeAccessByHash: TypedContractMethod<
+    [cidHash: BytesLike],
+    [void],
+    "nonpayable"
+  >;
 
   revokeGrant: TypedContractMethod<
     [cid: string, granteePubkey: string],
@@ -228,6 +391,12 @@ export interface HealthRecords extends BaseContract {
   >;
 
   setRecord: TypedContractMethod<[cid: string], [void], "nonpayable">;
+
+  signalKeyRotation: TypedContractMethod<
+    [cidHash: BytesLike],
+    [void],
+    "nonpayable"
+  >;
 
   viewGrant: TypedContractMethod<
     [cid: string, granteePubkey: string],
@@ -246,8 +415,31 @@ export interface HealthRecords extends BaseContract {
   ): T;
 
   getFunction(
+    nameOrSignature: "computeCidHash"
+  ): TypedContractMethod<[cid: string], [string], "view">;
+  getFunction(
+    nameOrSignature: "getLatestGrant"
+  ): TypedContractMethod<
+    [cidHash: BytesLike],
+    [
+      [string, bigint, boolean] & {
+        grantee: string;
+        expiry: bigint;
+        active: boolean;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
     nameOrSignature: "getRecord"
   ): TypedContractMethod<[patient: AddressLike], [string], "view">;
+  getFunction(
+    nameOrSignature: "grantAccessByHash"
+  ): TypedContractMethod<
+    [cidHash: BytesLike, grantee: AddressLike, expiry: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "grants"
   ): TypedContractMethod<
@@ -258,6 +450,20 @@ export interface HealthRecords extends BaseContract {
         expiryTimestamp: bigint;
         granter: string;
         createdAt: bigint;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "hashGrants"
+  ): TypedContractMethod<
+    [arg0: BytesLike],
+    [
+      [string, bigint, boolean, string] & {
+        grantee: string;
+        expiry: bigint;
+        active: boolean;
+        owner: string;
       }
     ],
     "view"
@@ -277,8 +483,14 @@ export interface HealthRecords extends BaseContract {
     "nonpayable"
   >;
   getFunction(
+    nameOrSignature: "recordUpload"
+  ): TypedContractMethod<[cidHash: BytesLike], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "records"
   ): TypedContractMethod<[arg0: AddressLike], [string], "view">;
+  getFunction(
+    nameOrSignature: "revokeAccessByHash"
+  ): TypedContractMethod<[cidHash: BytesLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "revokeGrant"
   ): TypedContractMethod<
@@ -289,6 +501,9 @@ export interface HealthRecords extends BaseContract {
   getFunction(
     nameOrSignature: "setRecord"
   ): TypedContractMethod<[cid: string], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "signalKeyRotation"
+  ): TypedContractMethod<[cidHash: BytesLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "viewGrant"
   ): TypedContractMethod<
@@ -303,6 +518,20 @@ export interface HealthRecords extends BaseContract {
     "view"
   >;
 
+  getEvent(
+    key: "AccessGranted"
+  ): TypedContractEvent<
+    AccessGrantedEvent.InputTuple,
+    AccessGrantedEvent.OutputTuple,
+    AccessGrantedEvent.OutputObject
+  >;
+  getEvent(
+    key: "AccessRevoked"
+  ): TypedContractEvent<
+    AccessRevokedEvent.InputTuple,
+    AccessRevokedEvent.OutputTuple,
+    AccessRevokedEvent.OutputObject
+  >;
   getEvent(
     key: "GrantRecorded"
   ): TypedContractEvent<
@@ -324,8 +553,37 @@ export interface HealthRecords extends BaseContract {
     RecordUpdatedEvent.OutputTuple,
     RecordUpdatedEvent.OutputObject
   >;
+  getEvent(
+    key: "UploadRecorded"
+  ): TypedContractEvent<
+    UploadRecordedEvent.InputTuple,
+    UploadRecordedEvent.OutputTuple,
+    UploadRecordedEvent.OutputObject
+  >;
 
   filters: {
+    "AccessGranted(bytes32,address,address,uint256)": TypedContractEvent<
+      AccessGrantedEvent.InputTuple,
+      AccessGrantedEvent.OutputTuple,
+      AccessGrantedEvent.OutputObject
+    >;
+    AccessGranted: TypedContractEvent<
+      AccessGrantedEvent.InputTuple,
+      AccessGrantedEvent.OutputTuple,
+      AccessGrantedEvent.OutputObject
+    >;
+
+    "AccessRevoked(bytes32,address)": TypedContractEvent<
+      AccessRevokedEvent.InputTuple,
+      AccessRevokedEvent.OutputTuple,
+      AccessRevokedEvent.OutputObject
+    >;
+    AccessRevoked: TypedContractEvent<
+      AccessRevokedEvent.InputTuple,
+      AccessRevokedEvent.OutputTuple,
+      AccessRevokedEvent.OutputObject
+    >;
+
     "GrantRecorded(string,address,string,uint256)": TypedContractEvent<
       GrantRecordedEvent.InputTuple,
       GrantRecordedEvent.OutputTuple,
@@ -357,6 +615,17 @@ export interface HealthRecords extends BaseContract {
       RecordUpdatedEvent.InputTuple,
       RecordUpdatedEvent.OutputTuple,
       RecordUpdatedEvent.OutputObject
+    >;
+
+    "UploadRecorded(bytes32,address,uint256)": TypedContractEvent<
+      UploadRecordedEvent.InputTuple,
+      UploadRecordedEvent.OutputTuple,
+      UploadRecordedEvent.OutputObject
+    >;
+    UploadRecorded: TypedContractEvent<
+      UploadRecordedEvent.InputTuple,
+      UploadRecordedEvent.OutputTuple,
+      UploadRecordedEvent.OutputObject
     >;
   };
 }
