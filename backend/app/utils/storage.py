@@ -9,11 +9,13 @@ Storacha uses UCAN-based authentication, so we shell out to the
 
 Setup:
 1. npm install -g @storacha/cli
-2. storacha login your-email@example.com
-3. storacha space create my-space
+2. Generate key: storacha key create --json
+3. Create space and delegation (see app/storage/storacha_client.py)
 
 Environment Variables:
-- STORACHA_CLI_PATH: Path to storacha binary (default: "storacha")
+- STORACHA_PRINCIPAL: Signing key from 'storacha key create'
+- STORACHA_PROOF: Delegation proof from 'storacha delegation create'
+- STORACHA_GATEWAY_URL: Gateway URL (default: https://storacha.link)
 - DEV_MODE: If "true", use local file storage instead of Storacha
 - LOCAL_STORAGE_DIR: Directory for dev mode storage (default: /tmp/decent-hospital-storage)
 """
@@ -28,6 +30,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 import requests
+
+# Import the robust Storacha client
+from app.storage.storacha_client import (
+    upload_blob as _storacha_upload_blob,
+    download_blob as _storacha_download_blob,
+    StorachaError,
+    StorachaConfigError,
+)
 
 # ============================================================================
 # Configuration
@@ -224,7 +234,7 @@ def upload_bytes_to_storacha(
     """
     Upload raw bytes to Storacha.
 
-    Writes bytes to a temp file and uploads via CLI.
+    Uses the robust Storacha client with retry logic and integrity verification.
 
     Args:
         data: Bytes to upload.
@@ -240,17 +250,18 @@ def upload_bytes_to_storacha(
     if is_dev_mode():
         return upload_to_local_storage(data, filename)
     
-    # Write to temp file and upload
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp:
-        tmp.write(data)
-        tmp_path = tmp.name
-    
     try:
-        result = upload_to_storacha(tmp_path)
-        result["name"] = filename
-        return result
-    finally:
-        os.unlink(tmp_path)
+        # Use the robust Storacha client with isolated environment
+        result = _storacha_upload_blob(data, filename)
+        return {
+            "cid": result["cid"],
+            "name": filename,
+            "size": result["size"],
+        }
+    except StorachaConfigError as e:
+        raise RuntimeError(f"Storacha not configured: {e}")
+    except StorachaError as e:
+        raise RuntimeError(f"Storacha upload failed: {e}")
 
 
 # Aliases for backwards compatibility
@@ -285,24 +296,26 @@ def download_from_ipfs(cid: str, gateway: str = "storacha.link") -> bytes:
     """
     Download file content from IPFS via gateway or local storage.
 
+    Uses the robust Storacha client with retry logic.
+
     Args:
         cid: IPFS Content Identifier.
-        gateway: Gateway domain to use.
+        gateway: Gateway domain to use (ignored, uses STORACHA_GATEWAY_URL).
 
     Returns:
         File content as bytes.
 
     Raises:
-        requests.HTTPError: If download fails.
+        RuntimeError: If download fails.
     """
     # Check local storage first (for dev mode CIDs)
     if cid.startswith("bafydev"):
         return download_from_local_storage(cid)
     
-    url = get_ipfs_gateway_url(cid, gateway)
-    response = requests.get(url, timeout=300)
-    response.raise_for_status()
-    return response.content
+    try:
+        return _storacha_download_blob(cid)
+    except StorachaError as e:
+        raise RuntimeError(f"IPFS download failed: {e}")
 
 
 # ============================================================================

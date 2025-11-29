@@ -1,0 +1,3 @@
+Hello from Decent-Hospital!
+This is a sample file for testing Storacha storage integration.
+If you can read this after downloading, the storage is working correctly.
