@@ -9,6 +9,7 @@ import Link from 'next/link';
 import Layout from '@/components/Layout';
 import NetworkCheck from '@/components/NetworkCheck';
 import FileViewer from '@/components/FileViewer';
+import HospitalInviteTokens from '@/components/HospitalInviteTokens';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
 import { listFiles, listGrants } from '@/lib/api';
@@ -119,7 +120,7 @@ function FileRow({ file, isExpanded, onToggle, onView, onShare }: {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, isHospital } = useAuth();
   const { isConnected, isCorrectNetwork } = useWalletContext();
   
   const [files, setFiles] = useState<FileRecord[]>([]);
@@ -441,6 +442,13 @@ export default function DashboardPage() {
           cid={selectedFile.cid}
           onClose={() => setSelectedFile(null)}
         />
+      )}
+
+      {/* Hospital Invite Tokens Section - Only for Hospital Users */}
+      {isHospital && (
+        <div className="mt-8">
+          <HospitalInviteTokens />
+        </div>
       )}
     </Layout>
   );

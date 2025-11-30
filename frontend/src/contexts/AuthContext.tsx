@@ -10,6 +10,7 @@ interface User {
   username: string;
   email: string;
   public_key?: string;
+  role?: 'patient' | 'hospital';
 }
 
 interface AuthContextType {
@@ -17,6 +18,8 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isHospital: boolean;
+  isPatient: boolean;
   login: (user: User, token: string) => void;
   logout: () => void;
 }
@@ -60,6 +63,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('user');
   };
 
+  const isHospital = user?.role === 'hospital';
+  const isPatient = user?.role === 'patient' || (!user?.role && Boolean(user));
+
   return (
     <AuthContext.Provider
       value={{
@@ -67,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token,
         isAuthenticated: Boolean(user && token),
         isLoading,
+        isHospital,
+        isPatient,
         login,
         logout,
       }}

@@ -7,11 +7,15 @@ uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 
 # Cryptography
-cryptography>=41.0.0
+# Note: umbral 0.3.0 requires cryptography~=3.0, so we use a compatible version
+cryptography>=3.4.0,<4.0
 umbral>=0.3.0  # pyUmbral for proxy re-encryption
 
 # JWT Authentication
 python-jose[cryptography]>=3.3.0
+
+# Password hashing (Argon2)
+argon2-cffi>=23.1.0
 
 # HTTP client
 requests>=2.31.0

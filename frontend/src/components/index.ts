@@ -9,3 +9,4 @@ export { default as CidDisplay } from './CidDisplay';
 export { default as TxHashDisplay } from './TxHashDisplay';
 export { default as SeedLoginModal } from './SeedLoginModal';
 export { default as FileViewer } from './FileViewer';
+export { default as HospitalInviteTokens } from './HospitalInviteTokens';
