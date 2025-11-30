@@ -795,6 +795,42 @@ async def get_grants_for_file(file_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+async def get_grant_by_file_and_grantee(file_id: int, grantee_id: int) -> Optional[dict]:
+    """
+    Get an active grant for a specific file and grantee.
+    
+    Args:
+        file_id: ID of the file
+        grantee_id: ID of the grantee user
+        
+    Returns:
+        Grant dictionary if found, None otherwise
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT 
+                g.id,
+                g.file_id,
+                g.granter_id,
+                g.grantee_id,
+                g.reencryption_key,
+                g.expires_at,
+                g.status,
+                g.tx_hash,
+                g.created_at
+            FROM grants g
+            WHERE g.file_id = ? AND g.grantee_id = ? AND g.status = 'active'
+            ORDER BY g.created_at DESC
+            LIMIT 1
+            """,
+            (file_id, grantee_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 # ============================================================================
 # Database Operations - Access Requests
 # ============================================================================
@@ -1204,6 +1240,32 @@ async def get_audit_logs_by_type(patient_id: int, event_type: str) -> list[dict]
             ORDER BY al.created_at DESC
             """,
             (patient_id, patient_id, patient_id, event_type),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_grant_events_for_patient(patient_id: int) -> list[dict]:
+    """
+    Get all grant events from audit_logs for a patient.
+    This captures grants that may not be in the grants table.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   u1.username as actor_name,
+                   u2.username as target_name, u2.role as target_role,
+                   f.filename
+            FROM audit_logs al
+            LEFT JOIN users u1 ON al.actor_id = u1.id
+            LEFT JOIN users u2 ON al.target_id = u2.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE al.patient_id = ? AND al.event_type = 'grant'
+            ORDER BY al.created_at DESC
+            """,
+            (patient_id,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

@@ -10,7 +10,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
-import { getCategorizedAuditLogs, CategorizedAuditResponse, getAuditLogs } from '@/lib/api';
+import { getMyAuditLogs, CategorizedAuditResponse, getAuditLogs } from '@/lib/api';
 
 // Tab types
 type TabType = 'activity' | 'grants' | 'access' | 'revokes';
@@ -157,8 +157,8 @@ export default function AuditPage() {
     setIsLoading(true);
     
     try {
-      // Try the new categorized endpoint first
-      const result = await getCategorizedAuditLogs(user.id);
+      // Use the secure endpoint - JWT authenticated, users only see their own data
+      const result = await getMyAuditLogs();
       if (result.data) {
         setAllLogs(result.data.all_logs || []);
         setGrants(result.data.grants || []);
@@ -170,6 +170,8 @@ export default function AuditPage() {
           access: result.data.access_count || 0,
           revokes: result.data.revokes_count || 0,
         });
+      } else if (result.error) {
+        console.error('Failed to load audit logs:', result.error);
       }
     } catch (error) {
       console.error('Failed to load categorized audit logs, falling back:', error);
@@ -326,8 +328,13 @@ export default function AuditPage() {
                 }`}>
                   {grant.status === 'revoked' ? 'Revoked' : grant.is_expired ? 'Expired' : 'Active'}
                 </span>
+                {grant.tx_hash && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                    ⛓️ On-Chain
+                  </span>
+                )}
                 {grant.timestamp && (
-                  <span className="text-sm text-gray-500">{formatTimeAgo(grant.timestamp)}</span>
+                  <span className="text-sm text-gray-500">Granted {formatTimeAgo(grant.timestamp)}</span>
                 )}
               </div>
               
@@ -340,18 +347,35 @@ export default function AuditPage() {
                 <p className="text-sm text-gray-600 mt-1">📄 {grant.filename}</p>
               )}
               
-              {grant.expires_at && !grant.is_expired && (
-                <p className="text-sm text-amber-600 mt-1">
-                  Expires: {new Date(grant.expires_at).toLocaleString()}
+              {grant.expires_at ? (
+                <p className={`text-sm mt-1 ${grant.is_expired ? 'text-red-600' : 'text-amber-600'}`}>
+                  {grant.is_expired ? '⏰ Expired on: ' : '⏰ Expires: '}
+                  {new Date(grant.expires_at).toLocaleString()}
                 </p>
+              ) : (
+                <p className="text-sm text-gray-500 mt-1">🔓 No expiration set (permanent until revoked)</p>
               )}
               
               {renderBlockchainBadge(grant.tx_hash)}
+            </div>
+            
+            <div className="text-right text-sm text-gray-500 flex-shrink-0">
+              {grant.timestamp && new Date(grant.timestamp).toLocaleDateString()}
             </div>
           </div>
         ))}
       </div>
     );
+  };
+
+  const getAccessDetails = (details: string | Record<string, any> | undefined) => {
+    if (!details) return null;
+    try {
+      const parsed = typeof details === 'string' ? JSON.parse(details) : details;
+      return parsed;
+    } catch {
+      return null;
+    }
   };
 
   const renderAccessTab = () => {
@@ -362,16 +386,18 @@ export default function AuditPage() {
     
     return (
       <div className="divide-y divide-gray-100">
-        {filtered.map((access) => (
+        {filtered.map((access) => {
+          const details = getAccessDetails(access.details);
+          return (
           <div key={access.id} className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors">
             <div className="bg-sky-50 w-12 h-12 rounded-xl flex items-center justify-center border border-gray-100 flex-shrink-0">
-              <span className="text-xl">👁️</span>
+              <span className="text-xl">{details?.action === 'file_downloaded' ? '📥' : '👁️'}</span>
             </div>
             
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-700">
-                  Record Accessed
+                  {details?.action === 'file_downloaded' ? 'File Downloaded' : 'Record Accessed'}
                 </span>
                 {access.verified_onchain && (
                   <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
@@ -384,13 +410,21 @@ export default function AuditPage() {
               </div>
               
               <p className="text-gray-900 font-medium">
-                <span className="text-indigo-600">{access.actor_name || `User #${access.actor_id}`}</span>
-                {access.actor_role && <span className="text-gray-500 text-sm"> ({access.actor_role})</span>}
-                <span> accessed your record</span>
+                <span className="text-indigo-600">{access.actor_name || details?.accessor_name || `User #${access.actor_id}`}</span>
+                {(access.actor_role || details?.accessor_role) && (
+                  <span className="text-gray-500 text-sm"> ({access.actor_role || details?.accessor_role})</span>
+                )}
+                <span> {details?.action === 'file_downloaded' ? 'downloaded' : 'accessed'} your record</span>
               </p>
               
-              {access.filename && (
-                <p className="text-sm text-gray-600 mt-1">📄 {access.filename}</p>
+              {(access.filename || details?.filename) && (
+                <p className="text-sm text-gray-600 mt-1">📄 {access.filename || details?.filename}</p>
+              )}
+              
+              {details?.grant_expires_at && (
+                <p className="text-sm text-amber-600 mt-1">
+                  ⏰ Grant expires: {new Date(details.grant_expires_at).toLocaleDateString()}
+                </p>
               )}
               
               {renderBlockchainBadge(access.tx_hash, access.block_number)}
@@ -398,11 +432,13 @@ export default function AuditPage() {
             
             {access.timestamp && (
               <div className="text-right text-sm text-gray-500 flex-shrink-0">
+                {new Date(access.timestamp).toLocaleDateString()}<br/>
                 {new Date(access.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     );
   };

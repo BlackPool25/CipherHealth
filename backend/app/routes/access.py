@@ -40,6 +40,7 @@ from app.db import (
     get_approved_request_by_cid_and_pubkey,
     get_file_by_cid,
     get_files_by_owner,
+    get_grant_by_file_and_grantee,
     get_pending_requests_for_owner,
     DATABASE_PATH,
     get_user_by_id,
@@ -356,17 +357,21 @@ async def approve_access(
         
         # Record grant in audit log
         try:
-            # Get file info to find requester id
+            # Get file info to find requester id and name
             grantee_id = None
+            grantee_name = None
+            grantee_role = None
             async with aiosqlite.connect(DATABASE_PATH) as db:
                 db.row_factory = aiosqlite.Row
                 cursor = await db.execute(
-                    "SELECT id FROM users WHERE public_key = ?",
+                    "SELECT id, username, role FROM users WHERE public_key = ?",
                     (requester_pubkey,)
                 )
                 row = await cursor.fetchone()
                 if row:
                     grantee_id = row["id"]
+                    grantee_name = row["username"]
+                    grantee_role = row["role"]
             
             await create_audit_log(
                 event_type="grant",
@@ -378,6 +383,8 @@ async def approve_access(
                 details=json.dumps({
                     "filename": file_record.get("filename"),
                     "expires_at": expires_at,
+                    "grantee_name": grantee_name,
+                    "grantee_role": grantee_role,
                     "grantee_pubkey": requester_pubkey[:32] + "..." if requester_pubkey else None,
                 }),
                 tx_hash=tx_hash,
@@ -575,6 +582,10 @@ async def redeem_access(
         
         # Always record in database audit log
         try:
+            # Get the grant to include expiry information
+            grant_info = await get_grant_by_file_and_grantee(file_record["id"], current_user["id"])
+            expires_at = grant_info.get("expires_at") if grant_info else None
+            
             await create_audit_log(
                 event_type="access",
                 actor_id=current_user["id"],
@@ -586,6 +597,8 @@ async def redeem_access(
                     "filename": file_record.get("filename"),
                     "accessor_role": current_user.get("role", "unknown"),
                     "accessor_name": current_user.get("username"),
+                    "action": "file_downloaded",
+                    "grant_expires_at": expires_at,
                 }),
                 tx_hash=tx_hash,
                 block_number=block_number,

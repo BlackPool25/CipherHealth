@@ -268,13 +268,24 @@ export default function AccessRequestsPage() {
       return;
     }
 
+    // Validate UUID format (basic check)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(granteeId.trim());
+    const isNumeric = /^\d+$/.test(granteeId.trim());
+    
+    if (!isUuid && !isNumeric) {
+      setGrantError('Please enter a valid UUID (e.g., 123e4567-e89b-12d3-a456-426614174000) or user ID');
+      return;
+    }
+
     setIsCreatingGrant(true);
     setGrantError('');
     setGrantSuccess('');
 
     const result = await createGrant({
       granter_id: user.id,
-      grantee_id: parseInt(granteeId),
+      grantee_uuid: isUuid ? granteeId.trim() : undefined,
+      grantee_id: isNumeric ? parseInt(granteeId) : undefined,
       file_id: selectedFileId,
     });
 
@@ -284,9 +295,12 @@ export default function AccessRequestsPage() {
       return;
     }
 
-    setGrantSuccess('Access grant created successfully!');
+    setGrantSuccess(`Access grant created successfully for ${result.data?.grantee_uuid || 'user #' + result.data?.grantee_id}!`);
     setSelectedFileId(null);
     setGranteeId('');
+    if (result.data?.tx_hash) {
+      setLastTxHash(result.data.tx_hash);
+    }
     await loadData();
     setIsCreatingGrant(false);
   };
@@ -754,15 +768,18 @@ export default function AccessRequestsPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Grantee User ID
+                      Grantee UUID or User ID
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       value={granteeId}
                       onChange={(e) => setGranteeId(e.target.value)}
-                      placeholder="User ID to share with"
+                      placeholder="Enter UUID (e.g., abc123-...) or user ID"
                       className="input-dark w-full"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      💡 Ask the recipient for their Patient ID (UUID) from their profile page
+                    </p>
                   </div>
                   
                   <div className="flex items-end">

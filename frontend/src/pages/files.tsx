@@ -395,29 +395,29 @@ export default function FilesPage() {
                     </p>
                   )}
                   <p className="text-sm text-gray-500 mb-3">{formatDate(file.created_at)}</p>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap">
                     <button
                       onClick={() => handleViewFile(file)}
-                      className="flex-1 btn-neon text-sm py-2"
+                      className="flex-1 min-w-[60px] btn-neon text-sm py-2"
                     >
                       View
                     </button>
                     <button
                       onClick={() => handleRenameClick(file)}
-                      className="btn-ghost text-sm py-2 px-3"
+                      className="btn-ghost text-sm py-2 px-2"
                       title="Rename file"
                     >
                       ✏️
                     </button>
                     <button
                       onClick={() => handleShareFile(file)}
-                      className="btn-ghost text-sm py-2 px-3"
+                      className="btn-ghost text-sm py-2 px-2"
                     >
-                      Share
+                      📤
                     </button>
                     <button
                       onClick={() => handleRevokeFile(file)}
-                      className="btn-ghost text-sm py-2 px-3 text-rose-600 hover:text-rose-700"
+                      className="btn-ghost text-sm py-2 px-2 text-rose-600 hover:text-rose-700"
                       title="Revoke access and rotate encryption key"
                     >
                       🔄

@@ -17,8 +17,58 @@ Endpoints:
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
+
+
+def format_timestamp(timestamp_value: Any) -> str:
+    """
+    Format a timestamp value to ISO 8601 format with UTC timezone.
+    
+    SQLite stores timestamps as strings like "2025-11-30 12:34:56" in UTC,
+    but without timezone indicator. This function ensures proper ISO format
+    with 'Z' suffix so JavaScript can correctly parse it as UTC.
+    
+    Args:
+        timestamp_value: A timestamp as string, datetime, or None
+        
+    Returns:
+        ISO 8601 formatted string with UTC timezone (e.g., "2025-11-30T12:34:56Z")
+    """
+    if not timestamp_value:
+        return ""
+    
+    if isinstance(timestamp_value, datetime):
+        # If it's already a datetime, make sure it has UTC timezone
+        if timestamp_value.tzinfo is None:
+            timestamp_value = timestamp_value.replace(tzinfo=timezone.utc)
+        return timestamp_value.isoformat().replace("+00:00", "Z")
+    
+    # It's a string - parse and reformat
+    ts_str = str(timestamp_value).strip()
+    if not ts_str:
+        return ""
+    
+    # If already has Z or timezone info, return as-is after normalizing
+    if ts_str.endswith("Z") or "+" in ts_str or ts_str.endswith("UTC"):
+        return ts_str
+    
+    try:
+        # SQLite format: "2025-11-30 12:34:56" or "2025-11-30 12:34:56.123456"
+        # Try parsing with microseconds first
+        for fmt in ["%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]:
+            try:
+                dt = datetime.strptime(ts_str, fmt)
+                # SQLite CURRENT_TIMESTAMP is UTC, so add UTC timezone
+                dt = dt.replace(tzinfo=timezone.utc)
+                return dt.isoformat().replace("+00:00", "Z")
+            except ValueError:
+                continue
+        
+        # If parsing failed, return original with Z appended
+        return ts_str.replace(" ", "T") + "Z"
+    except Exception:
+        return ts_str
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -29,13 +79,15 @@ from app.db import (
     get_grants_by_granter,
     get_grants_for_grantee,
     get_user_by_id,
+    get_user_by_uuid,
     get_audit_logs_for_patient,
     get_grants_for_patient,
+    get_grant_events_for_patient,
     get_access_events_for_patient,
     get_revoke_events_for_patient,
 )
 from app.routes.auth import require_current_user
-)
+from app.utils.chain import is_chain_configured
 
 router = APIRouter()
 
@@ -215,7 +267,7 @@ async def get_user_audit_logs(user_id: int):
                 "filename": f["filename"],
                 "cid": f["cid"],
             },
-            "timestamp": f.get("created_at", ""),
+            "timestamp": format_timestamp(f.get("created_at")),
             "tx_hash": None,
         })
     
@@ -231,7 +283,7 @@ async def get_user_audit_logs(user_id: int):
                 "status": g.get("status", "active"),
                 "expires_at": g.get("expires_at"),
             },
-            "timestamp": g.get("created_at", ""),
+            "timestamp": format_timestamp(g.get("created_at")),
             "tx_hash": g.get("tx_hash"),
         })
     
@@ -246,7 +298,7 @@ async def get_user_audit_logs(user_id: int):
                 "file_id": g["file_id"],
                 "expires_at": g.get("expires_at"),
             },
-            "timestamp": g.get("created_at", ""),
+            "timestamp": format_timestamp(g.get("created_at")),
             "tx_hash": g.get("tx_hash"),
         })
     
@@ -309,18 +361,36 @@ async def get_categorized_audit_logs(
         Categorized audit logs with counts
         
     Example curl:
-        curl http://localhost:8000/audit/categorized/1
+        curl -H "Authorization: Bearer <token>" http://localhost:8000/audit/categorized/1
     """
-    # Verify user exists
-    user = await get_user_by_id(user_id)
-    if not user:
+    # SECURITY: Users can only view their own audit logs
+    if current_user["id"] != user_id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You can only view your own audit logs.",
         )
     
+    return await _get_categorized_audit_logs_for_user(user_id, current_user)
+
+
+async def _get_categorized_audit_logs_for_user(user_id: int, user: dict) -> CategorizedAuditResponse:
+    """
+    Internal function to get categorized audit logs for a user.
+    
+    This contains the actual logic, called by both public endpoints after auth.
+    Includes:
+    - Audit logs from the audit_logs table
+    - File uploads (from files table)
+    - Grants (from grants table)
+    - Access events (from audit_logs)
+    - Revoke events (from audit_logs + grants table)
+    - Blockchain events (filtered by patient's CIDs)
+    """
     # Get all audit logs from the audit_logs table
     all_logs_raw = await get_audit_logs_for_patient(user_id)
+    
+    # Fetch blockchain events for this patient (if chain is configured)
+    chain_events = await _get_blockchain_events_for_patient(user_id)
     
     # Format all logs
     all_logs = []
@@ -339,12 +409,35 @@ async def get_categorized_audit_logs(
             "details": log.get("details"),
             "tx_hash": log.get("tx_hash"),
             "block_number": log.get("block_number"),
-            "timestamp": str(log.get("created_at", "")),
+            "timestamp": format_timestamp(log.get("created_at")),
         })
     
-    # Get grants (active and past)
+    # Get user's uploaded files and add them to activity log
+    files = await get_files_by_owner(user_id)
+    file_upload_logs = []
+    for f in files:
+        file_upload_logs.append({
+            "id": f"file_{f.get('id')}",
+            "event_type": "upload",
+            "actor_id": user_id,
+            "actor_name": user.get("username"),
+            "actor_role": user.get("role", "patient"),
+            "target_id": None,
+            "target_name": None,
+            "target_role": None,
+            "filename": f.get("filename"),
+            "cid": f.get("cid"),
+            "details": {"category": f.get("category")},
+            "tx_hash": f.get("tx_hash"),
+            "block_number": None,
+            "timestamp": format_timestamp(f.get("created_at")),
+        })
+    
+    # Get grants (active and past) from grants table
     grants_raw = await get_grants_for_patient(user_id)
     grants = []
+    seen_grant_ids = set()
+    
     for g in grants_raw:
         is_expired = False
         expires_at = g.get("expires_at")
@@ -368,8 +461,44 @@ async def get_categorized_audit_logs(
             "is_expired": is_expired,
             "expires_at": expires_at,
             "tx_hash": g.get("tx_hash"),
-            "timestamp": str(g.get("created_at", "")),
+            "timestamp": format_timestamp(g.get("created_at")),
         })
+        seen_grant_ids.add(g.get("id"))
+    
+    # Also get grant events from audit_logs (for grants that may not be in grants table)
+    grant_events = await get_grant_events_for_patient(user_id)
+    for ge in grant_events:
+        # Parse details to get grantee info
+        details = {}
+        if ge.get("details"):
+            try:
+                import json
+                details = json.loads(ge.get("details")) if isinstance(ge.get("details"), str) else ge.get("details")
+            except:
+                pass
+        
+        # Check if we already have this grant from the grants table
+        # Use file_id + target_id as a unique key
+        grant_key = (ge.get("file_id"), ge.get("target_id"))
+        
+        grants.append({
+            "id": f"audit_{ge.get('id')}",
+            "grantee_id": ge.get("target_id"),
+            "grantee_name": ge.get("target_name") or details.get("grantee_name"),
+            "grantee_role": ge.get("target_role") or details.get("grantee_role"),
+            "file_id": ge.get("file_id"),
+            "filename": ge.get("filename") or details.get("filename"),
+            "cid": ge.get("cid"),
+            "status": "active",  # From audit_log we assume it was active when created
+            "is_expired": False,
+            "expires_at": details.get("expires_at"),
+            "tx_hash": ge.get("tx_hash"),
+            "timestamp": format_timestamp(ge.get("created_at")),
+            "source": "audit_log",
+        })
+    
+    # Sort grants by timestamp descending
+    grants.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     
     # Get access events
     access_raw = await get_access_events_for_patient(user_id)
@@ -385,7 +514,7 @@ async def get_categorized_audit_logs(
             "details": a.get("details"),
             "tx_hash": a.get("tx_hash"),
             "block_number": a.get("block_number"),
-            "timestamp": str(a.get("created_at", "")),
+            "timestamp": format_timestamp(a.get("created_at")),
             "verified_onchain": bool(a.get("tx_hash")),
         })
     
@@ -407,7 +536,7 @@ async def get_categorized_audit_logs(
             "cid": r.get("cid"),
             "details": r.get("details"),
             "tx_hash": r.get("tx_hash"),
-            "timestamp": str(r.get("created_at", "")),
+            "timestamp": format_timestamp(r.get("created_at")),
             "verified_onchain": bool(r.get("tx_hash")),
         })
         # Track this grant as seen if details contain grant_id
@@ -436,7 +565,7 @@ async def get_categorized_audit_logs(
                 "cid": g.get("cid"),
                 "details": {"source": "historical", "grant_id": g.get("id")},
                 "tx_hash": g.get("tx_hash"),
-                "timestamp": str(g.get("created_at", "")),
+                "timestamp": format_timestamp(g.get("created_at")),
                 "verified_onchain": bool(g.get("tx_hash")),
             })
     
@@ -464,7 +593,7 @@ async def get_categorized_audit_logs(
                 "details": {"status": g.get("status")},
                 "tx_hash": g.get("tx_hash"),
                 "block_number": None,
-                "timestamp": str(g.get("created_at", "")),
+                "timestamp": format_timestamp(g.get("created_at")),
             })
             # If revoked, also add revoke event
             if g.get("status") == "revoked":
@@ -481,11 +610,84 @@ async def get_categorized_audit_logs(
                     "details": {"source": "historical"},
                     "tx_hash": g.get("tx_hash"),
                     "block_number": None,
-                    "timestamp": str(g.get("created_at", "")),
+                    "timestamp": format_timestamp(g.get("created_at")),
                 })
+    
+    # Add file uploads to combined logs
+    combined_all_logs.extend(file_upload_logs)
+    
+    # Add blockchain events to combined logs and categorize them
+    chain_grants = []
+    chain_access = []
+    chain_revokes = []
+    
+    for event in chain_events:
+        event_type = event.get("event_type", "").lower()
+        
+        # Create a formatted log entry from chain event
+        chain_log = {
+            "id": f"chain_{event.get('tx_hash', '')}_{event.get('block_number', '')}",
+            "event_type": event_type.replace("access", "").replace("record", "").strip() or event_type,
+            "actor_id": None,
+            "actor_name": None,
+            "actor_role": None,
+            "target_id": None,
+            "target_name": None,
+            "target_role": None,
+            "filename": None,
+            "cid": event.get("cid"),
+            "details": {
+                "source": "blockchain",
+                "owner_address": event.get("owner"),
+                "grantee_address": event.get("grantee"),
+                "cid_hash": event.get("cidHash"),
+            },
+            "tx_hash": event.get("tx_hash"),
+            "block_number": event.get("block_number"),
+            "timestamp": event.get("timestamp"),
+            "verified_onchain": True,
+        }
+        
+        combined_all_logs.append(chain_log)
+        
+        # Categorize by event type
+        if "granted" in event_type.lower() or event_type.lower() == "grant":
+            chain_grants.append({
+                **chain_log,
+                "grantee_id": None,
+                "grantee_name": event.get("grantee", "")[:10] + "..." if event.get("grantee") else None,
+                "status": "active",
+                "is_expired": False,
+                "expires_at": event.get("expiry"),
+            })
+        elif "revoked" in event_type.lower() or event_type.lower() == "revoke":
+            chain_revokes.append(chain_log)
+        elif "accessed" in event_type.lower() or "downloaded" in event_type.lower() or event_type.lower() == "access":
+            chain_access.append(chain_log)
+    
+    # Merge chain events with database events (avoid duplicates by tx_hash)
+    existing_tx_hashes = {g.get("tx_hash") for g in grants if g.get("tx_hash")}
+    for cg in chain_grants:
+        if cg.get("tx_hash") not in existing_tx_hashes:
+            grants.append(cg)
+    
+    existing_tx_hashes = {a.get("tx_hash") for a in access_events if a.get("tx_hash")}
+    for ca in chain_access:
+        if ca.get("tx_hash") not in existing_tx_hashes:
+            access_events.append(ca)
+    
+    existing_tx_hashes = {r.get("tx_hash") for r in revokes if r.get("tx_hash")}
+    for cr in chain_revokes:
+        if cr.get("tx_hash") not in existing_tx_hashes:
+            revokes.append(cr)
     
     # Sort combined logs by timestamp descending
     combined_all_logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # Re-sort categorized lists
+    grants.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    access_events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    revokes.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     
     return CategorizedAuditResponse(
         all_logs=combined_all_logs,
@@ -496,8 +698,184 @@ async def get_categorized_audit_logs(
         grants_count=len(grants),
         access_count=len(access_events),
         revokes_count=len(revokes),
-        source="database",
+        source="database+blockchain",
     )
+
+
+async def _get_blockchain_events_for_patient(patient_id: int) -> list[dict]:
+    """
+    Fetch blockchain events for a specific patient.
+    
+    Gets all on-chain events related to the patient's files (by CID).
+    This provides a tamper-proof audit trail that patients can verify independently.
+    
+    Args:
+        patient_id: The patient's user ID
+        
+    Returns:
+        List of blockchain events related to the patient
+    """
+    if not is_chain_configured():
+        return []
+    
+    if not HEALTH_RECORDS_CONTRACT or HEALTH_RECORDS_CONTRACT == "0x0000000000000000000000000000000000000000":
+        return []
+    
+    try:
+        # Get patient's files to find their CIDs
+        patient_files = await get_files_by_owner(patient_id)
+        patient_cids = {f.get("cid") for f in patient_files if f.get("cid")}
+        
+        if not patient_cids:
+            return []
+        
+        # Compute CID hashes for filtering
+        cid_hashes = set()
+        for cid in patient_cids:
+            if cid:
+                cid_hash = Web3.keccak(text=cid)
+                cid_hashes.add(cid_hash.hex() if hasattr(cid_hash, 'hex') else cid_hash)
+        
+        w3 = Web3(Web3.HTTPProvider(SEPOLIA_RPC_URL))
+        
+        if not w3.is_connected():
+            return []
+        
+        # Updated ABI with hash-based events
+        EVENTS_ABI = [
+            {
+                "anonymous": False,
+                "inputs": [
+                    {"indexed": True, "name": "cidHash", "type": "bytes32"},
+                    {"indexed": True, "name": "owner", "type": "address"},
+                    {"indexed": False, "name": "ts", "type": "uint256"}
+                ],
+                "name": "UploadRecorded",
+                "type": "event"
+            },
+            {
+                "anonymous": False,
+                "inputs": [
+                    {"indexed": True, "name": "cidHash", "type": "bytes32"},
+                    {"indexed": True, "name": "owner", "type": "address"},
+                    {"indexed": False, "name": "grantee", "type": "address"},
+                    {"indexed": False, "name": "expiry", "type": "uint256"}
+                ],
+                "name": "AccessGranted",
+                "type": "event"
+            },
+            {
+                "anonymous": False,
+                "inputs": [
+                    {"indexed": True, "name": "cidHash", "type": "bytes32"},
+                    {"indexed": True, "name": "owner", "type": "address"}
+                ],
+                "name": "AccessRevoked",
+                "type": "event"
+            }
+        ]
+        
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(HEALTH_RECORDS_CONTRACT),
+            abi=EVENTS_ABI,
+        )
+        
+        # Get latest block
+        latest_block = w3.eth.block_number
+        from_block = max(0, latest_block - 50000)  # Last 50000 blocks for more history
+        
+        events = []
+        
+        # Get UploadRecorded events (filter by patient's CID hashes)
+        try:
+            for cid_hash in cid_hashes:
+                try:
+                    upload_events = contract.events.UploadRecorded.get_logs(
+                        fromBlock=from_block,
+                        toBlock=latest_block,
+                        argument_filters={"cidHash": bytes.fromhex(cid_hash[2:] if cid_hash.startswith("0x") else cid_hash)}
+                    )
+                    for event in upload_events:
+                        # Convert timestamp to ISO format
+                        ts = event.args.ts if hasattr(event.args, 'ts') else 0
+                        timestamp = format_timestamp(datetime.fromtimestamp(ts, tz=timezone.utc)) if ts else None
+                        
+                        events.append({
+                            "event_type": "upload",
+                            "cidHash": event.args.cidHash.hex() if hasattr(event.args.cidHash, 'hex') else str(event.args.cidHash),
+                            "owner": event.args.owner,
+                            "timestamp": timestamp,
+                            "block_number": event.blockNumber,
+                            "tx_hash": event.transactionHash.hex() if hasattr(event.transactionHash, 'hex') else str(event.transactionHash),
+                        })
+                except Exception:
+                    pass  # Individual filter might fail, continue
+        except Exception:
+            pass
+        
+        # Get AccessGranted events
+        try:
+            for cid_hash in cid_hashes:
+                try:
+                    grant_events = contract.events.AccessGranted.get_logs(
+                        fromBlock=from_block,
+                        toBlock=latest_block,
+                        argument_filters={"cidHash": bytes.fromhex(cid_hash[2:] if cid_hash.startswith("0x") else cid_hash)}
+                    )
+                    for event in grant_events:
+                        expiry = event.args.expiry if hasattr(event.args, 'expiry') else 0
+                        timestamp = format_timestamp(datetime.fromtimestamp(expiry, tz=timezone.utc)) if expiry else None
+                        
+                        events.append({
+                            "event_type": "grant",
+                            "cidHash": event.args.cidHash.hex() if hasattr(event.args.cidHash, 'hex') else str(event.args.cidHash),
+                            "owner": event.args.owner,
+                            "grantee": event.args.grantee if hasattr(event.args, 'grantee') else None,
+                            "expiry": timestamp,
+                            "timestamp": timestamp,
+                            "block_number": event.blockNumber,
+                            "tx_hash": event.transactionHash.hex() if hasattr(event.transactionHash, 'hex') else str(event.transactionHash),
+                        })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
+        # Get AccessRevoked events
+        try:
+            for cid_hash in cid_hashes:
+                try:
+                    revoke_events = contract.events.AccessRevoked.get_logs(
+                        fromBlock=from_block,
+                        toBlock=latest_block,
+                        argument_filters={"cidHash": bytes.fromhex(cid_hash[2:] if cid_hash.startswith("0x") else cid_hash)}
+                    )
+                    for event in revoke_events:
+                        # Get block timestamp
+                        block = w3.eth.get_block(event.blockNumber)
+                        timestamp = format_timestamp(datetime.fromtimestamp(block.timestamp, tz=timezone.utc)) if block else None
+                        
+                        events.append({
+                            "event_type": "revoke",
+                            "cidHash": event.args.cidHash.hex() if hasattr(event.args.cidHash, 'hex') else str(event.args.cidHash),
+                            "owner": event.args.owner,
+                            "timestamp": timestamp,
+                            "block_number": event.blockNumber,
+                            "tx_hash": event.transactionHash.hex() if hasattr(event.transactionHash, 'hex') else str(event.transactionHash),
+                        })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
+        # Sort by block number
+        events.sort(key=lambda x: x.get("block_number", 0), reverse=True)
+        
+        return events
+        
+    except Exception as e:
+        print(f"Warning: Failed to fetch blockchain events: {e}")
+        return []
 
 
 @router.get("/chain", response_model=ChainAuditResponse)
@@ -549,11 +927,12 @@ async def get_chain_audit():
                 toBlock=latest_block,
             )
             for event in record_added:
+                unix_ts = event.args.timestamp
                 events.append({
                     "event_type": "RecordAdded",
                     "patient": event.args.patient,
                     "recordHash": event.args.recordHash.hex(),
-                    "timestamp": event.args.timestamp,
+                    "timestamp": format_timestamp(datetime.fromtimestamp(unix_ts, tz=timezone.utc)) if unix_ts else None,
                     "block_number": event.blockNumber,
                     "tx_hash": event.transactionHash.hex(),
                 })
@@ -567,12 +946,13 @@ async def get_chain_audit():
                 toBlock=latest_block,
             )
             for event in access_granted:
+                unix_ts = event.args.timestamp
                 events.append({
                     "event_type": "AccessGranted",
                     "patient": event.args.patient,
                     "doctor": event.args.doctor,
                     "recordHash": event.args.recordHash.hex(),
-                    "timestamp": event.args.timestamp,
+                    "timestamp": format_timestamp(datetime.fromtimestamp(unix_ts, tz=timezone.utc)) if unix_ts else None,
                     "block_number": event.blockNumber,
                     "tx_hash": event.transactionHash.hex(),
                 })
@@ -586,12 +966,13 @@ async def get_chain_audit():
                 toBlock=latest_block,
             )
             for event in access_revoked:
+                unix_ts = event.args.timestamp
                 events.append({
                     "event_type": "AccessRevoked",
                     "patient": event.args.patient,
                     "doctor": event.args.doctor,
                     "recordHash": event.args.recordHash.hex(),
-                    "timestamp": event.args.timestamp,
+                    "timestamp": format_timestamp(datetime.fromtimestamp(unix_ts, tz=timezone.utc)) if unix_ts else None,
                     "block_number": event.blockNumber,
                     "tx_hash": event.transactionHash.hex(),
                 })
@@ -605,12 +986,13 @@ async def get_chain_audit():
                 toBlock=latest_block,
             )
             for event in record_accessed:
+                unix_ts = event.args.timestamp
                 events.append({
                     "event_type": "RecordAccessed",
                     "doctor": event.args.doctor,
                     "patient": event.args.patient,
                     "recordHash": event.args.recordHash.hex(),
-                    "timestamp": event.args.timestamp,
+                    "timestamp": format_timestamp(datetime.fromtimestamp(unix_ts, tz=timezone.utc)) if unix_ts else None,
                     "block_number": event.blockNumber,
                     "tx_hash": event.transactionHash.hex(),
                 })

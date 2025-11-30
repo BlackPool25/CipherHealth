@@ -362,10 +362,12 @@ async def revoke_access(
     # Get all grants for this file
     grants = await get_grants_for_file(file_record["id"])
     revoked_count = 0
+    revoked_grants = []  # Track which grants we revoke for audit log
     
     # Revoke all active grants
     for grant in grants:
         if grant.get("status") == "active":
+            revoked_grants.append(grant)  # Save for audit log before revoking
             success = await revoke_grant(grant["id"], None)
             if success:
                 revoked_count += 1
@@ -381,25 +383,24 @@ async def revoke_access(
         print(f"Warning: On-chain revocation failed: {e}")
     
     # Record revoke event in audit log for each revoked grant
-    for grant in grants:
-        if grant.get("status") == "active":
-            try:
-                await create_audit_log(
-                    event_type="revoke",
-                    actor_id=current_user["id"],
-                    target_id=grant.get("grantee_id"),
-                    patient_id=current_user["id"],
-                    file_id=file_record["id"],
-                    cid=request.cid,
-                    details=json.dumps({
-                        "filename": file_record.get("filename"),
-                        "grantee_id": grant.get("grantee_id"),
-                        "grant_id": grant.get("id"),
-                    }),
-                    tx_hash=revoke_tx,
-                )
-            except Exception as e:
-                print(f"Warning: Failed to create revoke audit log: {e}")
+    for grant in revoked_grants:
+        try:
+            await create_audit_log(
+                event_type="revoke",
+                actor_id=current_user["id"],
+                target_id=grant.get("grantee_id"),
+                patient_id=current_user["id"],
+                file_id=file_record["id"],
+                cid=request.cid,
+                details=json.dumps({
+                    "filename": file_record.get("filename"),
+                    "grantee_id": grant.get("grantee_id"),
+                    "grant_id": grant.get("id"),
+                }),
+                tx_hash=revoke_tx,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create revoke audit log: {e}")
     
     return RevokeResponse(
         revoked=True,

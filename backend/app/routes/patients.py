@@ -23,7 +23,7 @@ References:
 
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Form, UploadFile, File
 from pydantic import BaseModel
@@ -34,6 +34,7 @@ from app.db import (
     update_user_public_key,
     get_grants_for_grantee,
     get_grants_by_granter,
+    create_audit_log,
 )
 from app.routes.auth import require_current_user, get_current_user_from_token
 from app.utils.chain import (
@@ -48,6 +49,42 @@ from app.utils.chain import (
     ChainError,
     ChainConfigError,
 )
+
+
+def format_timestamp(timestamp_value: Any) -> Optional[str]:
+    """
+    Format a timestamp value to ISO 8601 format with UTC timezone.
+    
+    SQLite stores timestamps as strings like "2025-11-30 12:34:56" in UTC,
+    but without timezone indicator. This function ensures proper ISO format
+    with 'Z' suffix so JavaScript can correctly parse it as UTC.
+    """
+    if not timestamp_value:
+        return None
+    
+    if isinstance(timestamp_value, datetime):
+        if timestamp_value.tzinfo is None:
+            timestamp_value = timestamp_value.replace(tzinfo=timezone.utc)
+        return timestamp_value.isoformat().replace("+00:00", "Z")
+    
+    ts_str = str(timestamp_value).strip()
+    if not ts_str:
+        return None
+    
+    if ts_str.endswith("Z") or "+" in ts_str or ts_str.endswith("UTC"):
+        return ts_str
+    
+    try:
+        for fmt in ["%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]:
+            try:
+                dt = datetime.strptime(ts_str, fmt)
+                dt = dt.replace(tzinfo=timezone.utc)
+                return dt.isoformat().replace("+00:00", "Z")
+            except ValueError:
+                continue
+        return ts_str.replace(" ", "T") + "Z"
+    except Exception:
+        return ts_str
 from app.utils.storage import upload_bytes_to_storacha, is_valid_cid
 
 router = APIRouter()
@@ -488,9 +525,10 @@ async def get_hospitals_for_patient(patient_id: int) -> list[dict]:
                 ha.revoked_at,
                 ha.tx_hash,
                 u.username as hospital_username,
-                (SELECT COUNT(*) FROM files f WHERE f.owner_id = ? 
-                 AND EXISTS (SELECT 1 FROM grants g 
-                             WHERE g.file_id = f.id AND g.grantee_id = ha.hospital_id)) as file_count
+                (SELECT COUNT(*) FROM audit_logs al 
+                 WHERE al.event_type = 'upload' 
+                 AND al.actor_id = ha.hospital_id 
+                 AND al.patient_id = ?) as file_count
             FROM hospital_access ha
             JOIN users u ON ha.hospital_id = u.id
             WHERE ha.patient_id = ?
@@ -786,9 +824,9 @@ async def list_patient_hospitals(
             hospital_id=h["hospital_id"],
             hospital_username=h["hospital_username"],
             access_status=h["status"],
-            granted_at=h.get("granted_at"),
-            expires_at=h.get("expires_at"),
-            revoked_at=h.get("revoked_at"),
+            granted_at=format_timestamp(h.get("granted_at")),
+            expires_at=format_timestamp(h.get("expires_at")),
+            revoked_at=format_timestamp(h.get("revoked_at")),
             file_count=h.get("file_count", 0),
             tx_hash=h.get("tx_hash"),
             on_chain_verified=on_chain_verified,
@@ -1072,6 +1110,31 @@ async def revoke_hospital_access_endpoint(
         # Even if DB update fails, the on-chain revocation is recorded
         # Log warning but don't fail
         print(f"Warning: On-chain revocation succeeded but DB update failed for patient {patient_id}, hospital {hospital_id}")
+    
+    # Get hospital details for audit log
+    hospital = await get_user_by_id(hospital_id)
+    hospital_name = hospital.get("username") if hospital else f"hospital_{hospital_id}"
+    
+    # Record revocation in audit log
+    import json
+    try:
+        await create_audit_log(
+            event_type="revoke",
+            actor_id=patient_id,
+            target_id=hospital_id,
+            patient_id=patient_id,
+            file_id=None,
+            cid=None,
+            details=json.dumps({
+                "hospital_name": hospital_name,
+                "hospital_id": hospital_id,
+                "kfrag_revoked": kfrag_revoked,
+                "action": "hospital_access_revoked",
+            }),
+            tx_hash=tx_hash,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create revoke audit log: {e}")
     
     return {
         "patient_id": patient_id,

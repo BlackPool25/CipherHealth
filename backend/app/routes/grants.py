@@ -26,12 +26,14 @@ from app.db import (
     GrantCreate,
     GrantResponse,
     create_grant,
+    create_audit_log,
     get_file_by_cid,
     get_file_by_id,
     get_grant_by_id,
     get_grants_by_granter,
     get_grants_for_grantee,
     get_user_by_id,
+    get_user_by_uuid,
     revoke_grant,
 )
 from app.routes.auth import require_current_user
@@ -62,7 +64,8 @@ class CreateGrantRequest(BaseModel):
     """Request to create a new grant (full form)."""
 
     granter_id: int
-    grantee_id: int
+    grantee_id: Optional[int] = None  # Either grantee_id or grantee_uuid must be provided
+    grantee_uuid: Optional[str] = None  # UUID of the grantee (preferred)
     file_id: int
     expires_at: Optional[str] = None
 
@@ -71,7 +74,10 @@ class CreateGrantResponse(BaseModel):
     """Response after creating a grant."""
 
     grant_id: int
+    grantee_id: int  # Resolved grantee ID
+    grantee_uuid: Optional[str] = None  # Grantee's UUID if available
     reencryption_key: str  # Umbral kfrag (hex encoded, stored server-side encrypted)
+    tx_hash: Optional[str] = None  # On-chain transaction hash
     message: str
 
 
@@ -213,13 +219,16 @@ async def grant_access(
 @router.post("/create", response_model=CreateGrantResponse)
 async def create_new_grant(request: CreateGrantRequest):
     """
-    Create a new re-encryption key grant (legacy endpoint).
+    Create a new re-encryption key grant.
+    
+    Supports granting access by either grantee_id (numeric) or grantee_uuid (UUID).
+    Using UUID is recommended as it's more secure and user-friendly.
     
     Args:
-        request: Full grant creation request
+        request: Grant creation request with granter_id, grantee (by id or uuid), file_id
         
     Returns:
-        Grant ID and re-encryption key
+        Grant ID, resolved grantee info, and re-encryption key
     """
     # Validate granter exists
     granter = await get_user_by_id(request.granter_id)
@@ -229,19 +238,56 @@ async def create_new_grant(request: CreateGrantRequest):
             detail="Granter not found",
         )
     
-    # Validate grantee exists
-    grantee = await get_user_by_id(request.grantee_id)
-    if not grantee:
+    # Resolve grantee - support both ID and UUID
+    grantee = None
+    grantee_id = None
+    grantee_uuid = None
+    
+    if request.grantee_uuid:
+        # Look up by UUID (preferred)
+        grantee = await get_user_by_uuid(request.grantee_uuid)
+        if not grantee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No user found with UUID: {request.grantee_uuid}",
+            )
+        grantee_id = grantee.get("id")
+        grantee_uuid = request.grantee_uuid
+    elif request.grantee_id:
+        # Look up by numeric ID (legacy)
+        grantee = await get_user_by_id(request.grantee_id)
+        if not grantee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No user found with ID: {request.grantee_id}",
+            )
+        grantee_id = request.grantee_id
+        grantee_uuid = grantee.get("uuid")
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Grantee not found",
+            detail="Either grantee_id or grantee_uuid must be provided",
         )
     
+    # Validate grantee has a public key
     grantee_public_key = grantee.get("public_key")
     if not grantee_public_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Grantee has no public key registered",
+            detail="Grantee has no public key registered. They need to generate encryption keys first.",
+        )
+    
+    # Validate file exists and belongs to granter
+    file_record = await get_file_by_id(request.file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File not found",
+        )
+    if file_record.get("owner_id") != request.granter_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the file owner can grant access",
         )
     
     try:
@@ -255,16 +301,34 @@ async def create_new_grant(request: CreateGrantRequest):
         
         grant_data = GrantCreate(
             granter_id=request.granter_id,
-            grantee_id=request.grantee_id,
+            grantee_id=grantee_id,
             file_id=request.file_id,
             expires_at=request.expires_at,
         )
         grant_id = await create_grant(grant_data, reenc_key)
         
+        # Record grant in audit log
+        try:
+            await create_audit_log(
+                event_type="grant",
+                actor_id=request.granter_id,
+                target_id=grantee_id,
+                patient_id=request.granter_id,
+                file_id=request.file_id,
+                cid=file_record.get("cid"),
+                details=f'{{"filename": "{file_record.get("filename")}", "grantee_name": "{grantee.get("username")}", "grantee_uuid": "{grantee_uuid}"}}',
+                tx_hash=None,  # On-chain recording handled separately
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create grant audit log: {e}")
+        
         return CreateGrantResponse(
             grant_id=grant_id,
+            grantee_id=grantee_id,
+            grantee_uuid=grantee_uuid,
             reencryption_key=reenc_key,
-            message="Grant created successfully",
+            tx_hash=None,  # Can be added when on-chain recording is enabled
+            message=f"Grant created successfully for {grantee.get('username')}",
         )
         
     except Exception as e:

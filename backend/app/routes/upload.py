@@ -237,15 +237,22 @@ async def upload_file(
         
         # Record upload in audit log
         try:
+            # Determine if this is a hospital uploading for a patient
+            is_hospital_upload = current_user["id"] != patient_id
+            
             await create_audit_log(
                 event_type="upload",
                 actor_id=current_user["id"],
+                target_id=patient_id if is_hospital_upload else None,
                 patient_id=patient_id,
                 file_id=file_id,
                 cid=cid,
                 details=json.dumps({
                     "filename": filename,
                     "uploader_role": current_user.get("role", "unknown"),
+                    "uploader_name": current_user.get("username"),
+                    "is_hospital_upload": is_hospital_upload,
+                    "action": "hospital_upload" if is_hospital_upload else "patient_upload",
                 }),
                 tx_hash=tx_hash,
             )

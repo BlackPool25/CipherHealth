@@ -81,11 +81,25 @@ export default function GrantAccessPage() {
       setCreateError('Please fill in all fields');
       return;
     }
+    
+    // Validate UUID format (basic check)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(granteeId.trim());
+    const isNumeric = /^\d+$/.test(granteeId.trim());
+    
+    if (!isUuid && !isNumeric) {
+      setCreateError('Please enter a valid UUID (e.g., 123e4567-e89b-12d3-a456-426614174000) or user ID');
+      return;
+    }
+    
     setIsCreating(true);
     setCreateError('');
+    
+    // Use the new grant endpoint that accepts UUID
     const result = await createGrant({
       granter_id: user.id,
-      grantee_id: parseInt(granteeId),
+      grantee_uuid: isUuid ? granteeId.trim() : undefined,
+      grantee_id: isNumeric ? parseInt(granteeId) : undefined,
       file_id: selectedFileId,
     });
     if (result.error) {
@@ -96,7 +110,9 @@ export default function GrantAccessPage() {
     setShowCreateModal(false);
     setSelectedFileId(null);
     setGranteeId('');
-    setLastTxHash('0x' + 'b'.repeat(64));
+    if (result.data?.tx_hash) {
+      setLastTxHash(result.data.tx_hash);
+    }
     await loadData();
     setIsCreating(false);
   };
@@ -259,14 +275,17 @@ export default function GrantAccessPage() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Grantee User ID</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Grantee UUID or User ID</label>
                 <input
-                  type="number"
+                  type="text"
                   value={granteeId}
                   onChange={(e) => setGranteeId(e.target.value)}
-                  placeholder="Enter user ID to share with"
+                  placeholder="Enter UUID (e.g., abc123-...) or user ID"
                   className="input-dark w-full"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Ask the recipient for their Patient ID (UUID) from their profile page
+                </p>
               </div>
               
               {(!isConnected || !isCorrectNetwork) && (
