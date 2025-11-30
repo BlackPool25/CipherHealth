@@ -53,6 +53,7 @@ from app.db import (
     get_user_by_email,
     get_user_by_id,
     get_user_by_username,
+    get_user_by_uuid,
     update_user_public_key,
     use_hospital_invite_token,
     use_invite_code,
@@ -539,15 +540,17 @@ async def get_me(current_user: dict = Depends(require_current_user)):
     Requires valid JWT token in Authorization header.
     
     Returns:
-        Current user's information.
+        Current user's information including UUID.
     """
-    return UserResponse(
-        id=current_user["id"],
-        username=current_user["username"],
-        email=current_user.get("email", ""),
-        public_key=current_user.get("public_key"),
-        created_at=str(current_user.get("created_at", "")),
-    )
+    return {
+        "id": current_user["id"],
+        "uuid": current_user.get("uuid"),
+        "username": current_user["username"],
+        "email": current_user.get("email", ""),
+        "role": current_user.get("role", "patient"),
+        "public_key": current_user.get("public_key"),
+        "created_at": str(current_user.get("created_at", "")),
+    }
 
 
 @router.post("/refresh")
@@ -844,10 +847,14 @@ async def register_v2(
 @router.post("/login-v2", response_model=LoginResponse)
 async def login_v2(request: LoginRequest):
     """
-    Login with username and password.
+    Login with username/UUID and password.
+    
+    Supports login with either:
+    - Username + password
+    - UUID + password (for patients sharing their UUID)
     
     Args:
-        request: Login request with username and password
+        request: Login request with username (or UUID) and password
         
     Returns:
         JWT token and user info
@@ -855,11 +862,17 @@ async def login_v2(request: LoginRequest):
     Raises:
         HTTPException 401: Invalid credentials
     """
+    # Try to find user by username first
     user = await get_user_by_username(request.username)
+    
+    # If not found by username, try by UUID
+    if not user:
+        user = await get_user_by_uuid(request.username)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail="Invalid username/UUID or password",
         )
     
     # Check if user has a password (legacy users may not)
@@ -875,7 +888,7 @@ async def login_v2(request: LoginRequest):
     except VerifyMismatchError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail="Invalid username/UUID or password",
         )
     
     role = user.get("role", "patient")
@@ -887,6 +900,58 @@ async def login_v2(request: LoginRequest):
         role=role,
         message="Login successful",
     )
+
+
+class VerifyPasswordRequest(BaseModel):
+    """Request to verify the current user's password."""
+    password: str
+
+
+class VerifyPasswordResponse(BaseModel):
+    """Response for password verification."""
+    verified: bool
+    message: str
+
+
+@router.post("/verify-password", response_model=VerifyPasswordResponse)
+async def verify_password(
+    request: VerifyPasswordRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Verify the current user's password.
+    
+    This is used for sensitive operations like viewing the encryption passphrase.
+    
+    Args:
+        request: The password to verify
+        current_user: Authenticated user
+        
+    Returns:
+        Whether the password is correct
+        
+    Raises:
+        HTTPException 401: No password set for this account
+    """
+    # Check if user has a password
+    if not current_user.get("password_hash"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No password set for this account",
+        )
+    
+    # Verify password with Argon2
+    try:
+        ph.verify(current_user["password_hash"], request.password)
+        return VerifyPasswordResponse(
+            verified=True,
+            message="Password verified successfully",
+        )
+    except VerifyMismatchError:
+        return VerifyPasswordResponse(
+            verified=False,
+            message="Incorrect password",
+        )
 
 
 @router.post("/hospital/generate-invite", response_model=GenerateInviteResponse)

@@ -12,7 +12,8 @@ import FileViewer from '@/components/FileViewer';
 import HospitalInviteTokens from '@/components/HospitalInviteTokens';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
-import { listFiles, listGrants } from '@/lib/api';
+import { listFiles, listGrants, getHospitalPatients, HospitalPatient, getCurrentUser } from '@/lib/api';
+import KeyManager from '@/lib/KeyManager';
 
 interface FileRecord {
   id: number;
@@ -125,15 +126,17 @@ export default function DashboardPage() {
   
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
+  const [hospitalPatients, setHospitalPatients] = useState<HospitalPatient[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [isLoadingGrants, setIsLoadingGrants] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [expandedFileId, setExpandedFileId] = useState<number | null>(null);
   const [showAllFiles, setShowAllFiles] = useState(false);
+  const [hasEncryptionKeys, setHasEncryptionKeys] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.push('/login');
+      router.push('/auth');
     }
   }, [authLoading, isAuthenticated, router]);
 
@@ -148,13 +151,30 @@ export default function DashboardPage() {
     setIsLoadingFiles(true);
     setIsLoadingGrants(true);
 
-    const [filesResult, grantsResult] = await Promise.all([
+    const [filesResult, grantsResult, userResult] = await Promise.all([
       listFiles(user.id),
       listGrants(user.id),
+      getCurrentUser(),
     ]);
 
     if (filesResult.data) setFiles(filesResult.data.files || []);
     if (grantsResult.data) setGrants(grantsResult.data.grants || []);
+    
+    // Check if user has encryption keys set up
+    if (userResult.data) {
+      const hasServerKey = !!userResult.data.public_key;
+      const hasLocalKey = KeyManager.hasKeypair(String(user.id));
+      setHasEncryptionKeys(hasServerKey && hasLocalKey);
+    }
+
+    // Load hospital patients if user is a hospital
+    if (isHospital) {
+      const patientsResult = await getHospitalPatients();
+      if (patientsResult.data) {
+        const activePatients = patientsResult.data.patients.filter(p => p.status === 'active');
+        setHospitalPatients(activePatients);
+      }
+    }
 
     setIsLoadingFiles(false);
     setIsLoadingGrants(false);
@@ -178,6 +198,38 @@ export default function DashboardPage() {
   return (
     <Layout>
       <NetworkCheck />
+      
+      {/* Encryption Keys Warning Banner */}
+      {hasEncryptionKeys === false && (
+        <div className="mb-6 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+              <span className="text-xl">⚠️</span>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-amber-800 mb-1">
+                {isHospital ? 'Set Up Hospital Encryption Keys' : 'Set Up Encryption Keys'}
+              </h3>
+              <p className="text-amber-700 text-sm mb-3">
+                {isHospital 
+                  ? 'You need to set up encryption keys before you can decrypt patient files shared with you. Without keys, you cannot access any patient records.'
+                  : 'You need to set up encryption keys to securely receive and decrypt your health records.'
+                }
+              </p>
+              <Link 
+                href="/profile"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
+              >
+                <span>🔐</span>
+                <span>Set Up Keys Now</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Header */}
       <div className="mb-8">
@@ -246,27 +298,47 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Quick Actions */}
+      {/* Quick Actions - Role Based */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <Link 
-          href="/upload"
-          className="glass-card p-6 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 group card-lift"
-        >
-          <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-indigo group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
+        {/* Upload - Only for Hospitals */}
+        {isHospital ? (
+          <Link 
+            href="/upload"
+            className="glass-card p-6 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 group card-lift"
+          >
+            <div className="flex items-center gap-4">
+              <div className="icon-box icon-box-indigo group-hover:scale-110 transition-transform">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 group-hover:text-indigo-600 transition-colors">Upload Record</h3>
+                <p className="text-sm text-gray-500">Upload for patients</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-lg text-gray-900 group-hover:text-indigo-600 transition-colors">Upload Record</h3>
-              <p className="text-sm text-gray-500">Encrypt & store securely</p>
+          </Link>
+        ) : (
+          <Link 
+            href="/hospital-access"
+            className="glass-card p-6 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 group card-lift"
+          >
+            <div className="flex items-center gap-4">
+              <div className="icon-box icon-box-indigo group-hover:scale-110 transition-transform">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 group-hover:text-indigo-600 transition-colors">Hospital Access</h3>
+                <p className="text-sm text-gray-500">Manage who can upload</p>
+              </div>
             </div>
-          </div>
-        </Link>
+          </Link>
+        )}
         
         <Link 
-          href="/access-requests?tab=grant"
+          href={isHospital ? "/my-patients" : "/access-requests?tab=grant"}
           className="glass-card p-6 hover:shadow-xl hover:shadow-emerald-500/10 transition-all duration-300 group card-lift"
         >
           <div className="flex items-center gap-4">
@@ -276,8 +348,12 @@ export default function DashboardPage() {
               </svg>
             </div>
             <div>
-              <h3 className="font-bold text-lg text-gray-900 group-hover:text-emerald-600 transition-colors">Grant Access</h3>
-              <p className="text-sm text-gray-500">Share with providers</p>
+              <h3 className="font-bold text-lg text-gray-900 group-hover:text-emerald-600 transition-colors">
+                {isHospital ? 'My Patients' : 'Grant Access'}
+              </h3>
+              <p className="text-sm text-gray-500">
+                {isHospital ? 'View & request patients' : 'Share with providers'}
+              </p>
             </div>
           </div>
         </Link>
@@ -301,7 +377,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Files */}
+        {/* Recent Files - Different view for hospitals vs patients */}
         <div className="lg:col-span-2">
           <div className="glass-card overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
@@ -312,16 +388,82 @@ export default function DashboardPage() {
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-gray-900">Your Records</h2>
-                  <p className="text-sm text-gray-500">{files.length} encrypted file{files.length !== 1 ? 's' : ''}</p>
+                  <h2 className="text-lg font-bold text-gray-900">
+                    {isHospital ? 'Patient Records' : 'Your Records'}
+                  </h2>
+                  <p className="text-sm text-gray-500">
+                    {isHospital 
+                      ? 'Manage files for your patients' 
+                      : `${files.length} encrypted file${files.length !== 1 ? 's' : ''}`}
+                  </p>
                 </div>
               </div>
-              <Link href="/upload" className="btn-neon text-sm py-2 px-4">
-                + Upload
-              </Link>
+              {isHospital && (
+                <Link href="/upload" className="btn-neon text-sm py-2 px-4">
+                  + Upload
+                </Link>
+              )}
             </div>
 
-            {isLoadingFiles ? (
+            {isHospital ? (
+              /* Hospital View - Show patients list */
+              <div className="p-4">
+                {hospitalPatients.length === 0 ? (
+                  <div className="text-center py-6">
+                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center mx-auto mb-4">
+                      <span className="text-3xl">👥</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Patients Yet</h3>
+                    <p className="text-gray-500 mb-4 max-w-sm mx-auto text-sm">
+                      Request access from patients to view and manage their health records
+                    </p>
+                    <Link href="/my-patients" className="btn-neon text-sm">
+                      Request Patient Access
+                    </Link>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold text-gray-900">Your Patients ({hospitalPatients.length})</h3>
+                      <Link href="/my-patients" className="text-indigo-600 text-sm hover:underline">
+                        View All →
+                      </Link>
+                    </div>
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {hospitalPatients.slice(0, 5).map((patient) => (
+                        <Link
+                          key={patient.patient_uuid}
+                          href={`/patient-files?patientUuid=${patient.patient_uuid}`}
+                          className="flex items-center gap-3 p-3 rounded-xl hover:bg-indigo-50 transition-all group"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                            {patient.patient_username.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-gray-900 truncate group-hover:text-indigo-600">
+                              {patient.patient_username}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {patient.file_count} files • Access {patient.expires_at ? 'expires ' + formatDate(patient.expires_at) : 'permanent'}
+                            </p>
+                          </div>
+                          <svg className="w-5 h-5 text-gray-400 group-hover:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </Link>
+                      ))}
+                    </div>
+                    {hospitalPatients.length > 5 && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 text-center">
+                        <Link href="/patient-files" className="text-indigo-600 text-sm hover:underline">
+                          View all {hospitalPatients.length} patients →
+                        </Link>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : isLoadingFiles ? (
               <div className="flex items-center justify-center h-32">
                 <div className="relative">
                   <div className="w-8 h-8 border-3 border-indigo-100 rounded-full"></div>
@@ -336,8 +478,16 @@ export default function DashboardPage() {
                   </svg>
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-1">No records yet</h3>
-                <p className="text-gray-500 mb-4">Your health records are protected with end-to-end encryption</p>
-                <Link href="/upload" className="btn-neon">Upload your first record</Link>
+                <p className="text-gray-500 mb-4">
+                  {isHospital 
+                    ? 'Upload health records for your patients' 
+                    : 'Your health records are protected with end-to-end encryption'}
+                </p>
+                {isHospital ? (
+                  <Link href="/upload" className="btn-neon">Upload a record</Link>
+                ) : (
+                  <Link href="/hospital-access" className="btn-neon">Manage Hospital Access</Link>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-gray-100">

@@ -15,20 +15,44 @@ export default function Navbar() {
 
   const handleLogout = () => {
     logout();
-    router.push('/login');
+    router.push('/auth');
   };
 
   const formatAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   };
 
-  const navLinks = [
+  // Base navigation links (shown to all authenticated users)
+  const baseNavLinks = [
     { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-    { href: '/files', label: 'Files', icon: '📁' },
-    { href: '/upload', label: 'Upload', icon: '⬆️' },
+  ];
+
+  // Patient-specific links
+  const patientNavLinks = [
+    { href: '/files', label: 'My Files', icon: '📁' },
+    { href: '/hospital-access', label: 'Hospital Access', icon: '🏥' },
     { href: '/access-requests', label: 'Access', icon: '🔐' },
+  ];
+
+  // Hospital-specific links
+  const hospitalNavLinks = [
+    { href: '/my-patients', label: 'My Patients', icon: '👥' },
+    { href: '/patient-files', label: 'Patient Files', icon: '📁' },
+    { href: '/upload', label: 'Upload', icon: '⬆️' },
+  ];
+
+  // Common links for all users
+  const commonNavLinks = [
     { href: '/audit', label: 'Audit', icon: '📋' },
     { href: '/profile', label: 'Profile', icon: '👤' },
+  ];
+
+  // Build nav links based on user role
+  const navLinks = [
+    ...baseNavLinks,
+    ...(user?.role === 'patient' ? patientNavLinks : []),
+    ...(user?.role === 'hospital' ? hospitalNavLinks : []),
+    ...commonNavLinks,
   ];
 
   return (

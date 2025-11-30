@@ -418,6 +418,82 @@ def test_multiple_grantees():
     return True
 
 
+def test_server_side_kfrag_from_secret_bytes():
+    """
+    Test server-side kfrag generation from raw secret key bytes.
+    
+    This tests the workflow where:
+    1. Frontend decrypts patient's secret key (using passphrase)
+    2. Frontend sends secret key bytes (hex) to server
+    3. Server generates pyumbral-compatible kfrags
+    4. Re-encryption works with server-generated kfrags
+    
+    This is the fix for WASM library (@nucypher/umbral-pre) incompatibility.
+    """
+    from app.utils.umbral_utils import generate_kfrag_from_secret_key_bytes
+    from umbral import SecretKey, Signer, encrypt, Capsule, KeyFrag
+    from umbral.pre import generate_kfrags, reencrypt as umbral_reencrypt
+    
+    # Simulate patient (Alice) with keys
+    patient_sk = SecretKey.random()
+    patient_pk = patient_sk.public_key()
+    patient_signing_sk = SecretKey.random()
+    
+    # Simulate hospital (Bob) with keys
+    hospital_sk = SecretKey.random()
+    hospital_pk = hospital_sk.public_key()
+    
+    # Patient's secret key bytes (what frontend would send after decryption)
+    patient_sk_bytes_hex = bytes(patient_sk.to_secret_bytes()).hex()
+    patient_signing_sk_bytes_hex = bytes(patient_signing_sk.to_secret_bytes()).hex()
+    hospital_pk_hex = bytes(hospital_pk).hex()
+    
+    # Generate kfrag using the new server-side function
+    kfrag_hex, verifying_key_hex = generate_kfrag_from_secret_key_bytes(
+        delegating_sk_bytes_hex=patient_sk_bytes_hex,
+        receiving_pk_hex=hospital_pk_hex,
+        signing_sk_bytes_hex=patient_signing_sk_bytes_hex,
+    )
+    
+    # Verify kfrag is 260 bytes (pyumbral format, not 310 bytes WASM format)
+    kfrag_bytes = bytes.fromhex(kfrag_hex)
+    assert len(kfrag_bytes) == 260, f"KFrag should be 260 bytes (pyumbral), got {len(kfrag_bytes)}"
+    
+    # Verify the kfrag can be parsed by pyumbral
+    kfrag = KeyFrag.from_bytes(kfrag_bytes)
+    assert kfrag is not None, "KFrag should be parseable by pyumbral"
+    
+    # Test full re-encryption flow with server-generated kfrag
+    # 1. Patient encrypts data
+    test_data = b"Patient medical record"
+    capsule, encrypted_data = encrypt(patient_pk, test_data)
+    
+    # 2. Verify kfrag and re-encrypt
+    from umbral import PublicKey
+    verifying_pk = PublicKey.from_bytes(bytes.fromhex(verifying_key_hex))
+    verified_kfrag = kfrag.verify(
+        verifying_pk=verifying_pk,
+        delegating_pk=patient_pk,
+        receiving_pk=hospital_pk,
+    )
+    
+    cfrag = umbral_reencrypt(capsule, verified_kfrag)
+    
+    # 3. Hospital decrypts with their key
+    from umbral.pre import decrypt_reencrypted
+    decrypted_data = decrypt_reencrypted(
+        receiving_sk=hospital_sk,
+        delegating_pk=patient_pk,
+        capsule=capsule,
+        verified_cfrags=[cfrag],
+        ciphertext=encrypted_data,
+    )
+    
+    assert decrypted_data == test_data, "Hospital should decrypt original data"
+    
+    return True
+
+
 if __name__ == "__main__":
     try:
         # Run all tests
@@ -426,6 +502,7 @@ if __name__ == "__main__":
         test_pyumbral_full_flow_simple()
         test_encrypt_bytes_directly()
         test_multiple_grantees()
+        test_server_side_kfrag_from_secret_bytes()
 
         # All tests passed
         print("PYUMBRAL FLOW OK")

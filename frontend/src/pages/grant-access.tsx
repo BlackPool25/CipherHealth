@@ -45,7 +45,7 @@ export default function GrantAccessPage() {
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) router.push('/login');
+    if (!authLoading && !isAuthenticated) router.push('/auth');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {

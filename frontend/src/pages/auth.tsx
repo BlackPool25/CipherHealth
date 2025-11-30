@@ -13,7 +13,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWallet } from '@/hooks/useWallet';
-import { registerV2, loginV2, validateInviteToken, generatePublicInvite } from '@/lib/api';
+import { registerV2, loginV2, validateInviteToken, generatePublicInvite, getCurrentUser } from '@/lib/api';
 
 type AuthMode = 'login' | 'register';
 type LoginMethod = 'wallet' | 'password';
@@ -121,11 +121,18 @@ export default function UnifiedAuthPage() {
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
+      // Store token temporarily to fetch full user profile
+      localStorage.setItem('jwt_token', result.data.access_token);
+      
+      // Fetch full user profile with UUID
+      const userResult = await getCurrentUser();
+      
       setAuth(
         {
           id: result.data.user_id,
+          uuid: userResult.data?.uuid,
           username,
-          email: '',
+          email: userResult.data?.email || '',
           role: result.data.role as 'patient' | 'hospital',
         },
         result.data.access_token
@@ -155,11 +162,18 @@ export default function UnifiedAuthPage() {
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
+      // Store token temporarily to fetch full user profile
+      localStorage.setItem('jwt_token', result.data.access_token);
+      
+      // Fetch full user profile with UUID
+      const userResult = await getCurrentUser();
+      
       setAuth(
         {
           id: result.data.user_id,
+          uuid: userResult.data?.uuid,
           username: walletUsername,
-          email: '',
+          email: userResult.data?.email || '',
           role: result.data.role as 'patient' | 'hospital',
           public_key: walletAddress,
         },
@@ -244,11 +258,18 @@ export default function UnifiedAuthPage() {
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
+      // Store token temporarily to fetch full user profile
+      localStorage.setItem('jwt_token', result.data.access_token);
+      
+      // Fetch full user profile with UUID
+      const userResult = await getCurrentUser();
+      
       setAuth(
         {
           id: result.data.user_id,
+          uuid: userResult.data?.uuid,
           username: finalUsername,
-          email: email || '',
+          email: email || userResult.data?.email || '',
           role: result.data.role as 'patient' | 'hospital',
           public_key: walletAddress || undefined,
         },

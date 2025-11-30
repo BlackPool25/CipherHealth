@@ -7,6 +7,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 
 interface User {
   id: number;
+  uuid?: string;
   username: string;
   email: string;
   public_key?: string;

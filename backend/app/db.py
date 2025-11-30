@@ -8,6 +8,7 @@ Defines models for users, files, and grants.
 import os
 import secrets
 import sqlite3
+import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
@@ -69,6 +70,8 @@ class FileRecord(BaseModel):
     filename: str
     encrypted_cek: Optional[str] = None  # CEK encrypted with owner's public key
     capsule: Optional[str] = None  # Umbral capsule for re-encryption (hex)
+    category: Optional[str] = None  # File category (e.g., Lab Results, Imaging)
+    tx_hash: Optional[str] = None  # On-chain transaction hash
     created_at: Optional[str] = None
 
 
@@ -164,6 +167,7 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT UNIQUE,
                 username TEXT UNIQUE NOT NULL,
                 email TEXT UNIQUE NOT NULL,
                 public_key TEXT,
@@ -277,6 +281,22 @@ async def init_db():
         except Exception:
             pass  # Column already exists
 
+        # Migration: Add uuid column to users if it doesn't exist
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN uuid TEXT UNIQUE")
+        except Exception:
+            pass  # Column already exists
+
+        # Generate UUIDs for existing users that don't have one
+        try:
+            cursor = await db.execute("SELECT id FROM users WHERE uuid IS NULL")
+            users_without_uuid = await cursor.fetchall()
+            for (user_id,) in users_without_uuid:
+                new_uuid = str(uuid.uuid4())
+                await db.execute("UPDATE users SET uuid = ? WHERE id = ?", (new_uuid, user_id))
+        except Exception as e:
+            print(f"Error generating UUIDs for existing users: {e}")
+
         await db.commit()
         print("Database initialized successfully.")
 
@@ -291,13 +311,14 @@ async def create_user(user: UserCreate) -> int:
     Create a new user in the database.
     Returns the new user's ID.
     """
+    user_uuid = str(uuid.uuid4())
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO users (username, email, public_key)
-            VALUES (?, ?, ?)
+            INSERT INTO users (uuid, username, email, public_key)
+            VALUES (?, ?, ?, ?)
             """,
-            (user.username, user.email, user.public_key),
+            (user_uuid, user.username, user.email, user.public_key),
         )
         await db.commit()
         return cursor.lastrowid
@@ -318,6 +339,17 @@ async def get_user_by_username(username: str) -> Optional[dict]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT * FROM users WHERE username = ?", (username,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_user_by_uuid(user_uuid: str) -> Optional[dict]:
+    """Get a user by their UUID."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE uuid = ?", (user_uuid,)
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -511,13 +543,14 @@ async def create_user_with_password(
     Create a new user with password hash.
     Returns the new user's ID.
     """
+    user_uuid = str(uuid.uuid4())
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO users (username, email, password_hash, role, public_key, needs_profile_upload)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO users (uuid, username, email, password_hash, role, public_key, needs_profile_upload)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (username, email, password_hash, role, public_key, 1 if needs_profile_upload else 0),
+            (user_uuid, username, email, password_hash, role, public_key, 1 if needs_profile_upload else 0),
         )
         await db.commit()
         return cursor.lastrowid
@@ -544,13 +577,16 @@ async def create_file_record(file: FileRecord) -> int:
     Create a new file record.
     Returns the file record's ID.
     """
+    # Ensure category column exists
+    await ensure_files_columns()
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO files (cid, owner_id, filename, encrypted_cek, capsule)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO files (cid, owner_id, filename, encrypted_cek, capsule, category)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (file.cid, file.owner_id, file.filename, file.encrypted_cek, file.capsule),
+            (file.cid, file.owner_id, file.filename, file.encrypted_cek, file.capsule, file.category),
         )
         await db.commit()
         return cursor.lastrowid
@@ -866,18 +902,32 @@ async def get_approved_request_by_cid_and_pubkey(
         return dict(row) if row else None
 
 
+async def ensure_files_columns() -> None:
+    """
+    Ensure files table has all required columns (tx_hash, category).
+    Run at startup or before operations that need these columns.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("PRAGMA table_info(files)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        
+        if "tx_hash" not in columns:
+            await db.execute("ALTER TABLE files ADD COLUMN tx_hash TEXT")
+        
+        if "category" not in columns:
+            await db.execute("ALTER TABLE files ADD COLUMN category TEXT")
+        
+        await db.commit()
+
+
 async def update_file_tx_hash(file_id: int, tx_hash: str) -> bool:
     """
     Update a file record with its on-chain transaction hash.
     Returns True if successful.
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        # First check if tx_hash column exists, add it if not
-        cursor = await db.execute("PRAGMA table_info(files)")
-        columns = [row[1] for row in await cursor.fetchall()]
-        
-        if "tx_hash" not in columns:
-            await db.execute("ALTER TABLE files ADD COLUMN tx_hash TEXT")
+        # Ensure columns exist
+        await ensure_files_columns()
         
         cursor = await db.execute(
             "UPDATE files SET tx_hash = ? WHERE id = ?",
@@ -885,3 +935,149 @@ async def update_file_tx_hash(file_id: int, tx_hash: str) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def update_file_category(file_id: int, category: str) -> bool:
+    """
+    Update a file record with its category.
+    Returns True if successful.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Ensure columns exist
+        await ensure_files_columns()
+        
+        cursor = await db.execute(
+            "UPDATE files SET category = ? WHERE id = ?",
+            (category, file_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def update_file_display_name(file_id: int, display_name: str, owner_id: int) -> bool:
+    """
+    Update a file's display name (what the user sees).
+    
+    This does NOT affect:
+    - The CID (content-addressed, immutable)
+    - The actual stored filename (used for content-type detection)
+    - Access grants or encryption
+    
+    Args:
+        file_id: ID of the file to rename
+        display_name: New display name for the file
+        owner_id: ID of the user (must own the file)
+        
+    Returns:
+        True if successful, False if file not found or not owned by user
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Add display_name column if it doesn't exist
+        try:
+            await db.execute("ALTER TABLE files ADD COLUMN display_name TEXT")
+        except Exception:
+            pass  # Column already exists
+        
+        # Only allow owner to rename
+        cursor = await db.execute(
+            "UPDATE files SET display_name = ? WHERE id = ? AND owner_id = ?",
+            (display_name, file_id, owner_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_users_without_uuid() -> list[dict]:
+    """
+    Get all users that don't have a UUID assigned.
+    
+    These are legacy users from before UUIDs were mandatory.
+    They need to re-register or be cleaned up.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE uuid IS NULL OR uuid = ''"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_users_without_uuid() -> int:
+    """
+    Delete all users that don't have a UUID.
+    
+    WARNING: This is destructive! Should be called only during cleanup.
+    This will also delete associated data (files, grants) due to FK constraints.
+    
+    Returns:
+        Number of users deleted
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Get IDs first for cleanup
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE uuid IS NULL OR uuid = ''"
+        )
+        rows = await cursor.fetchall()
+        user_ids = [row[0] for row in rows]
+        
+        if not user_ids:
+            return 0
+        
+        placeholders = ",".join("?" * len(user_ids))
+        
+        # Delete associated grants
+        await db.execute(
+            f"DELETE FROM grants WHERE granter_id IN ({placeholders}) OR grantee_id IN ({placeholders})",
+            user_ids + user_ids,
+        )
+        
+        # Delete associated files
+        await db.execute(
+            f"DELETE FROM files WHERE owner_id IN ({placeholders})",
+            user_ids,
+        )
+        
+        # Delete associated access requests
+        await db.execute(
+            f"DELETE FROM access_requests WHERE owner_id IN ({placeholders})",
+            user_ids,
+        )
+        
+        # Delete the users
+        cursor = await db.execute(
+            f"DELETE FROM users WHERE id IN ({placeholders})",
+            user_ids,
+        )
+        
+        await db.commit()
+        return cursor.rowcount
+
+
+async def get_files_accessed_by_hospital(patient_id: int, hospital_id: int) -> list[dict]:
+    """
+    Get list of files that a specific hospital has accessed for a patient.
+    
+    This is used for selective rotation - only rotate files the revoked hospital 
+    actually accessed, not all files.
+    
+    Returns list of file records with access metadata.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        # Get files that have active grants to this hospital
+        cursor = await db.execute(
+            """
+            SELECT DISTINCT f.*, g.created_at as granted_at, g.id as grant_id
+            FROM files f
+            JOIN grants g ON f.id = g.file_id
+            WHERE f.owner_id = ? 
+              AND g.grantee_id = ?
+              AND g.status = 'active'
+            ORDER BY g.created_at DESC
+            """,
+            (patient_id, hospital_id),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]

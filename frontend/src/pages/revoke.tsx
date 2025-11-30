@@ -59,7 +59,7 @@ export default function RevokePage() {
   const [newCapsule, setNewCapsule] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) router.push('/login');
+    if (!authLoading && !isAuthenticated) router.push('/auth');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {

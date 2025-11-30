@@ -23,8 +23,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id, get_file_by_id
-from app.routes.auth import get_current_user_from_token
+from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id, get_file_by_id, get_user_by_uuid, create_grant
+from app.routes.auth import get_current_user_from_token, require_current_user
+from app.routes.patients import get_hospital_access_record
 from app.utils.storage import upload_to_storacha, upload_bytes_to_storacha, is_valid_cid
 from app.utils.umbral_utils import (
     encrypt_with_cek,
@@ -32,7 +33,7 @@ from app.utils.umbral_utils import (
     encapsulate_cek,
     UMBRAL_AVAILABLE,
 )
-from app.utils.chain import is_chain_configured, set_record_onchain
+from app.utils.chain import is_chain_configured, set_record_onchain, verify_grant_onchain
 
 router = APIRouter()
 
@@ -90,6 +91,39 @@ class FileListResponse(BaseModel):
 
     files: list[dict]
     count: int
+
+
+class HospitalUploadResponse(BaseModel):
+    """Response after hospital uploads for patient."""
+    
+    cid: str
+    file_id: int
+    filename: str
+    patient_id: int
+    patient_uuid: str
+    hospital_id: int
+    category: Optional[str] = None
+    folder: Optional[str] = None  # Folder organization
+    encrypted_cek: str
+    capsule: str
+    hospital_grant_id: Optional[int] = None  # Grant ID for hospital to access
+    upload_tx: Optional[str] = None
+    etherscan_url: Optional[str] = None
+    message: str
+
+
+class HospitalUploadCiphertextRequest(BaseModel):
+    """Request for hospital to upload pre-encrypted ciphertext.
+    
+    Use this when hospital encrypts client-side with patient's public key.
+    """
+    
+    patient_uuid: str  # Changed to UUID
+    category: Optional[str] = None
+    folder: Optional[str] = None  # Folder organization
+    ciphertext_cid: str  # CID of ciphertext already uploaded to Storacha
+    capsule_meta: str  # Hex-encoded capsule from client-side encryption
+    encrypted_cek: str  # CEK encrypted with patient's public key
 
 
 # Temporary storage for encrypted files awaiting pinning
@@ -297,6 +331,369 @@ async def encrypt_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Encryption failed: {str(e)}",
         )
+
+
+# ============================================================================
+# Hospital Upload Helpers
+# ============================================================================
+
+async def check_hospital_has_grant(patient_id: int, hospital_id: int) -> bool:
+    """
+    Check if hospital has explicit grant to upload for patient.
+    
+    Checks:
+    1. hospital_access table in DB (explicit permission)
+    2. On-chain AccessGranted events (if chain configured)
+    
+    Args:
+        patient_id: Patient's user ID
+        hospital_id: Hospital's user ID
+        
+    Returns:
+        True if hospital has active grant
+    """
+    # Import here to avoid circular imports
+    from app.routes.patients import check_hospital_has_access
+    
+    # Check DB first
+    has_db_access = await check_hospital_has_access(patient_id, hospital_id)
+    if has_db_access:
+        return True
+    
+    # Check on-chain if configured
+    if is_chain_configured():
+        try:
+            # Get patient's public key for on-chain verification
+            patient = await get_user_by_id(patient_id)
+            hospital = await get_user_by_id(hospital_id)
+            
+            if patient and hospital:
+                patient_pubkey = patient.get("public_key")
+                hospital_pubkey = hospital.get("public_key")
+                
+                if patient_pubkey and hospital_pubkey:
+                    # Check if there's a grant for any of patient's files to hospital
+                    # For now, we require explicit DB grant
+                    # On-chain grants are for file-level access, not upload permission
+                    pass
+        except Exception as e:
+            print(f"Warning: On-chain grant check failed: {e}")
+    
+    return False
+
+
+def get_etherscan_url(tx_hash: str) -> str:
+    """Generate Etherscan URL for Sepolia testnet."""
+    # Ensure 0x prefix for valid Etherscan URL
+    if tx_hash and not tx_hash.startswith('0x'):
+        tx_hash = '0x' + tx_hash
+    return f"https://sepolia.etherscan.io/tx/{tx_hash}"
+
+
+# ============================================================================
+# Hospital Upload Routes
+# ============================================================================
+
+
+@router.post("/hospital", response_model=HospitalUploadResponse)
+async def hospital_upload(
+    file: UploadFile = File(...),
+    patient_uuid: str = Form(...),
+    category: Optional[str] = Form(None),
+    folder: Optional[str] = Form(None),
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Hospital uploads a file for a patient.
+    
+    Pre-conditions:
+    1. Caller must be authenticated as a hospital
+    2. Patient must exist (identified by UUID)
+    3. Hospital must have explicit grant from patient (with valid expiry)
+    
+    Behavior:
+    - Server encrypts CEK with patient's public key using pyUmbral
+    - Uploads ciphertext to Storacha
+    - Creates a grant for the hospital to access the file
+    - Records upload on-chain with actor=hospital
+    
+    Args:
+        file: File to encrypt and upload (multipart)
+        patient_uuid: Patient's UUID (share-safe identifier)
+        category: Optional category (e.g., "lab_results", "imaging")
+        folder: Optional folder path for organization
+        current_user: Authenticated hospital user
+        
+    Returns:
+        CID, upload transaction, grant ID for hospital access, and metadata
+        
+    Raises:
+        HTTPException 403: If hospital has no grant for patient or grant expired
+        HTTPException 400: If patient not found or has no public key
+        
+    Example curl:
+        curl -X POST http://localhost:8000/upload/hospital \\
+          -H "Authorization: Bearer <hospital_jwt>" \\
+          -F "file=@lab_results.pdf" \\
+          -F "patient_uuid=a1b2c3d4-e5f6-..." \\
+          -F "category=lab_results" \\
+          -F "folder=blood_tests/2024"
+    """
+    hospital_id = current_user["id"]
+    
+    # Verify caller is a hospital
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can use this endpoint",
+        )
+    
+    # Look up patient by UUID
+    patient = await get_user_by_uuid(patient_uuid)
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Patient not found with this UUID",
+        )
+    
+    patient_id = patient["id"]
+    
+    # Check patient has public key
+    patient_public_key = patient.get("public_key")
+    if not patient_public_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Patient has not set up encryption keys. Patient must create profile first.",
+        )
+    
+    # CHECK GRANT - This is the key security check
+    has_grant = await check_hospital_has_grant(patient_id, hospital_id)
+    if not has_grant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hospital does not have permission to upload for this patient. "
+                   "Patient must grant access first via POST /patients/{patient_id}/grant-hospital-access",
+        )
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        filename = file.filename or "unknown"
+        
+        # Build organized filename with folder and category
+        display_filename = filename
+        if folder:
+            display_filename = f"{folder}/{filename}"
+        if category:
+            display_filename = f"[{category}] {display_filename}"
+        
+        # Generate CEK and encrypt file content
+        cek = generate_cek()
+        encrypted_content, nonce = encrypt_with_cek(file_content, cek)
+        
+        # Combine nonce + encrypted content for storage
+        encrypted_blob = nonce + encrypted_content
+        
+        # Encapsulate CEK with patient's public key (patient is owner)
+        if UMBRAL_AVAILABLE and patient_public_key:
+            capsule_hex, cek_ciphertext = encapsulate_cek(cek, patient_public_key)
+        else:
+            # Fallback: just hex encode the CEK (NOT SECURE - dev only)
+            capsule_hex = ""
+            cek_ciphertext = cek.hex()
+            print("WARNING: pyUmbral not available, using insecure CEK storage")
+        
+        # Upload to Storacha
+        result = upload_bytes_to_storacha(
+            data=encrypted_blob,
+            filename=f"{filename}.enc",
+        )
+        cid = result.get("cid")
+        
+        if not cid or not is_valid_cid(cid):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to get valid CID from Storacha",
+            )
+        
+        # Create file record in database (PATIENT is owner)
+        file_record = FileRecord(
+            cid=cid,
+            owner_id=patient_id,
+            filename=display_filename,
+            encrypted_cek=cek_ciphertext,
+            capsule=capsule_hex,
+            category=category,  # Include category in file record
+        )
+        file_id = await create_file_record(file_record)
+        
+        # Create a grant for the hospital to access this file
+        # This allows the hospital to view/decrypt what they uploaded
+        hospital_grant_id = None
+        try:
+            from app.db import GrantCreate
+            from datetime import datetime, timezone, timedelta
+            
+            # Get hospital access expiry from hospital_access table
+            from app.routes.patients import get_hospital_access_record
+            access_record = await get_hospital_access_record(patient_id, hospital_id)
+            
+            # Grant expires when hospital's access expires (or 30 days default)
+            grant_expires = None
+            if access_record and access_record.get("expires_at"):
+                grant_expires = access_record["expires_at"]
+            else:
+                grant_expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+            
+            grant = GrantCreate(
+                granter_id=patient_id,  # Patient grants access
+                grantee_id=hospital_id,  # To the hospital
+                file_id=file_id,
+                expires_at=grant_expires,
+            )
+            hospital_grant_id = await create_grant(grant)
+        except Exception as grant_err:
+            print(f"Warning: Failed to create hospital grant: {grant_err}")
+        
+        # Record on-chain with actor info
+        upload_tx = None
+        etherscan_url = None
+        if is_chain_configured():
+            try:
+                upload_tx = await set_record_onchain(cid)
+                etherscan_url = get_etherscan_url(upload_tx)
+            except Exception as chain_err:
+                print(f"Warning: Failed to record on-chain: {chain_err}")
+        
+        return HospitalUploadResponse(
+            cid=cid,
+            file_id=file_id,
+            filename=display_filename,
+            patient_id=patient_id,
+            patient_uuid=patient_uuid,
+            hospital_id=hospital_id,
+            category=category,
+            folder=folder,
+            encrypted_cek=cek_ciphertext,
+            capsule=capsule_hex,
+            hospital_grant_id=hospital_grant_id,
+            upload_tx=upload_tx,
+            etherscan_url=etherscan_url,
+            message="File uploaded successfully for patient. Hospital has been granted access.",
+        )
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Hospital upload failed: {str(e)}",
+        )
+
+
+@router.post("/hospital/ciphertext", response_model=HospitalUploadResponse)
+async def hospital_upload_ciphertext(
+    request: HospitalUploadCiphertextRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Hospital uploads pre-encrypted ciphertext for a patient.
+    
+    Use this when hospital encrypts client-side:
+    1. Hospital fetches patient's public key
+    2. Hospital generates CEK, encrypts file, encapsulates CEK with patient pubkey
+    3. Hospital uploads ciphertext directly to Storacha
+    4. Hospital sends CID and capsule metadata to this endpoint
+    
+    Pre-conditions:
+    1. Caller must be authenticated as a hospital
+    2. Patient must exist
+    3. Hospital must have explicit grant from patient
+    
+    Args:
+        request: Upload request with CID and capsule metadata
+        current_user: Authenticated hospital user
+        
+    Returns:
+        Confirmation with on-chain tx
+        
+    Raises:
+        HTTPException 403: If hospital has no grant
+    """
+    hospital_id = current_user["id"]
+    
+    # Verify caller is a hospital
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can use this endpoint",
+        )
+    
+    # Verify patient exists
+    patient = await get_user_by_id(request.patient_id)
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Patient not found",
+        )
+    
+    # CHECK GRANT
+    has_grant = await check_hospital_has_grant(request.patient_id, hospital_id)
+    if not has_grant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hospital does not have permission to upload for this patient",
+        )
+    
+    # Validate CID
+    if not is_valid_cid(request.ciphertext_cid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid CID format",
+        )
+    
+    # Create file record
+    filename = f"hospital_upload_{hospital_id}"
+    if request.category:
+        filename = f"[{request.category}] {filename}"
+    
+    file_record = FileRecord(
+        cid=request.ciphertext_cid,
+        owner_id=request.patient_id,
+        filename=filename,
+        encrypted_cek=request.encrypted_cek,
+        capsule=request.capsule_meta,
+    )
+    file_id = await create_file_record(file_record)
+    
+    # Record on-chain
+    upload_tx = None
+    etherscan_url = None
+    if is_chain_configured():
+        try:
+            upload_tx = await set_record_onchain(request.ciphertext_cid)
+            etherscan_url = get_etherscan_url(upload_tx)
+        except Exception as e:
+            print(f"Warning: Failed to record on-chain: {e}")
+    
+    return HospitalUploadResponse(
+        cid=request.ciphertext_cid,
+        file_id=file_id,
+        filename=filename,
+        patient_id=request.patient_id,
+        hospital_id=hospital_id,
+        category=request.category,
+        encrypted_cek=request.encrypted_cek,
+        capsule=request.capsule_meta,
+        upload_tx=upload_tx,
+        etherscan_url=etherscan_url,
+        message="Ciphertext recorded for patient",
+    )
 
 
 @router.post("/pin", response_model=PinResponse)

@@ -2,18 +2,27 @@
  * FileViewer Component
  * Displays and downloads encrypted files from the backend
  * Handles image preview and file download for various types
+ * 
+ * Supports two decryption modes:
+ * 1. Owner decryption: Patient decrypts their own files using their passphrase
+ * 2. PRE decryption: Hospital decrypts patient files using re-encryption (cfrag)
  */
 
 import { useState } from 'react';
-import { downloadFile } from '@/lib/api';
+import { downloadFile, decryptFileForHospital } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import KeyManager from '@/lib/KeyManager';
 
 interface FileViewerProps {
   fileId: number;
   filename: string;
   cid: string;
   onClose: () => void;
-  userPrivateKey?: string; // For owner decryption
+  userPrivateKey?: string; // For owner decryption (deprecated - use passphrase)
   grantId?: number; // For grantee access
+  isReencryption?: boolean; // True if hospital viewing patient's file (PRE mode)
+  capsule?: string; // Original capsule (for PRE mode)
+  encrypted_cek?: string; // Encrypted CEK (for PRE mode)
 }
 
 interface FileData {
@@ -29,12 +38,21 @@ export default function FileViewer({
   cid, 
   onClose,
   userPrivateKey,
-  grantId 
+  grantId,
+  isReencryption = false,
+  capsule,
+  encrypted_cek,
 }: FileViewerProps) {
+  const { user, isHospital } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileData, setFileData] = useState<FileData | null>(null);
+  const [passphrase, setPassphrase] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [privateKeyInput, setPrivateKeyInput] = useState(userPrivateKey || '');
+  
+  // Determine if we need PRE mode (hospital viewing patient file)
+  const needsPRE = isReencryption || isHospital;
 
   const isImageFile = (name: string, type: string) => {
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
@@ -53,10 +71,127 @@ export default function FileViewer({
     return textExtensions.some(ext => name.toLowerCase().endsWith(ext)) || 
            textTypes.includes(type);
   };
+  
+  /**
+   * Hospital PRE decryption flow (server-side):
+   * 1. Load hospital's private key using passphrase
+   * 2. Send secret key to server for full server-side decryption
+   * 3. Server re-encrypts capsule → cfrag
+   * 4. Server decrypts CEK using cfrag + hospital's key
+   * 5. Server decrypts file and returns content
+   * 
+   * This is necessary because pyumbral (Python) and @nucypher/umbral-pre (WASM)
+   * have incompatible serialization formats.
+   */
+  const handlePREDownload = async () => {
+    if (!passphrase || !user?.id) {
+      setError('Please enter your passphrase to decrypt the file');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Load hospital's private key using passphrase
+      const keyPair = await KeyManager.loadPrivateKey(String(user.id), passphrase);
+      
+      if (!keyPair) {
+        throw new Error('Could not decrypt your keys. Check your passphrase or set up encryption in Profile.');
+      }
+      
+      // Convert secret key to hex for server-side decryption
+      const secretKeyHex = Array.from(keyPair.secretKeyBytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      
+      // Zero out key bytes after copying to hex
+      keyPair.secretKeyBytes.fill(0);
+      if (keyPair.signingKeyBytes) {
+        keyPair.signingKeyBytes.fill(0);
+      }
+      
+      // Request full server-side decryption
+      const result = await decryptFileForHospital(fileId, secretKeyHex);
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      if (!result.data) {
+        throw new Error('Failed to decrypt file');
+      }
+
+      setFileData({
+        filename: result.data.filename,
+        content: result.data.content_base64,
+        contentType: result.data.content_type,
+        size: result.data.size,
+      });
+
+    } catch (err) {
+      console.error('PRE decryption error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to decrypt file');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleDownload = async () => {
+    // If hospital viewing patient file, use PRE flow
+    if (needsPRE) {
+      return handlePREDownload();
+    }
+    
+    // Try passphrase-based decryption first (preferred) - for patients viewing their own files
+    if (passphrase && user?.id) {
+      setIsLoading(true);
+      setError(null);
+      
+      try {
+        // Load private key from KeyManager using passphrase
+        const keyPair = await KeyManager.loadPrivateKey(String(user.id), passphrase);
+        
+        if (!keyPair) {
+          throw new Error('Could not decrypt keys. Check your passphrase or set up encryption in Profile.');
+        }
+        
+        // Convert secretKeyBytes to hex string for the API
+        const privateKeyHex = Array.from(keyPair.secretKeyBytes)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+        
+        const result = await downloadFile(fileId, privateKeyHex, grantId);
+        
+        // Zero out sensitive data
+        keyPair.secretKeyBytes.fill(0);
+        
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        if (!result.data) {
+          throw new Error('No data received from server');
+        }
+
+        setFileData({
+          filename: result.data.filename,
+          content: result.data.content_base64,
+          contentType: result.data.content_type,
+          size: result.data.size,
+        });
+
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to decrypt file');
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+    
+    // Fallback: use raw private key (advanced mode)
     if (!privateKeyInput) {
-      setError('Please enter your private key to decrypt the file');
+      setError('Please enter your passphrase to decrypt the file');
       return;
     }
 
@@ -213,29 +348,41 @@ export default function FileViewer({
           {!fileData ? (
             /* Decryption Form */
             <div className="space-y-4">
-              <p className="text-gray-600 text-sm">
-                Enter your private key to decrypt and view this file.
-                Your key never leaves your browser.
-              </p>
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">🔐</span>
+                  <div>
+                    <h4 className="font-medium text-indigo-900">Encrypted File</h4>
+                    <p className="text-sm text-indigo-700">
+                      Enter your encryption passphrase to decrypt and view this file.
+                      Your keys never leave your browser.
+                    </p>
+                  </div>
+                </div>
+              </div>
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Private Key (hex)
+                  Encryption Passphrase
                 </label>
                 <input
                   type="password"
-                  value={privateKeyInput}
-                  onChange={(e) => setPrivateKeyInput(e.target.value)}
-                  placeholder="Enter your Umbral private key..."
-                  className="input-dark w-full font-mono text-sm"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Enter your encryption passphrase..."
+                  className="input-dark w-full"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  This is the passphrase you set up in your Profile settings.
+                </p>
               </div>
 
               <button
                 onClick={handleDownload}
-                disabled={isLoading || !privateKeyInput}
+                disabled={isLoading || !passphrase}
                 className={`w-full btn-neon py-3 ${
-                  isLoading || !privateKeyInput
+                  isLoading || !passphrase
                     ? 'opacity-50 cursor-not-allowed'
                     : ''
                 }`}
@@ -249,9 +396,52 @@ export default function FileViewer({
                     Decrypting...
                   </span>
                 ) : (
-                  'Decrypt & View'
+                  '🔓 Decrypt & View'
                 )}
               </button>
+
+              {/* Advanced: Raw Private Key (for debugging/recovery) */}
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <button
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                >
+                  <svg 
+                    className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  Advanced: Use raw private key
+                </button>
+                
+                {showAdvanced && (
+                  <div className="mt-3 space-y-3 p-3 bg-gray-50 rounded-lg">
+                    <p className="text-xs text-gray-500">
+                      For recovery purposes only. Use your raw Umbral private key (hex format).
+                    </p>
+                    <input
+                      type="password"
+                      value={privateKeyInput}
+                      onChange={(e) => setPrivateKeyInput(e.target.value)}
+                      placeholder="Enter raw private key (hex)..."
+                      className="input-dark w-full font-mono text-sm"
+                    />
+                    <button
+                      onClick={() => {
+                        setPassphrase(''); // Clear passphrase to use raw key
+                        handleDownload();
+                      }}
+                      disabled={isLoading || !privateKeyInput}
+                      className="w-full btn-ghost py-2 text-sm"
+                    >
+                      Decrypt with Raw Key
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             /* File Preview */

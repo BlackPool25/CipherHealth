@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAuditLog } from '@/lib/api';
+import { getAuditLogs } from '@/lib/api';
 
 interface AuditEntry {
   id: number;
@@ -57,7 +57,7 @@ export default function AuditPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) router.push('/login');
+    if (!authLoading && !isAuthenticated) router.push('/auth');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
@@ -68,8 +68,8 @@ export default function AuditPage() {
     if (!user?.id) return;
     setIsLoading(true);
     try {
-      const result = await getAuditLog(user.id);
-      if (result.data) setEntries(result.data.entries || []);
+      const result = await getAuditLogs(user.id);
+      if (result.data) setEntries(result.data.logs || []);
     } catch (error) {
       console.error('Failed to load audit log:', error);
     }

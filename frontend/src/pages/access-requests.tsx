@@ -186,7 +186,7 @@ export default function AccessRequestsPage() {
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.push('/login');
+      router.push('/auth');
     }
   }, [authLoading, isAuthenticated, router]);
 

@@ -81,6 +81,13 @@ def is_chain_configured() -> bool:
     ])
 
 
+def ensure_hex_prefix(tx_hash: str) -> str:
+    """Ensure transaction hash has 0x prefix for Etherscan compatibility."""
+    if tx_hash and not tx_hash.startswith('0x'):
+        return '0x' + tx_hash
+    return tx_hash
+
+
 # ============================================================================
 # Contract ABI
 # ============================================================================
@@ -281,7 +288,7 @@ async def set_record_onchain(cid: str) -> str:
         if receipt['status'] != 1:
             raise ChainError("Transaction reverted")
         
-        return tx_hash.hex()
+        return ensure_hex_prefix(tx_hash.hex())
         
     except ChainConfigError:
         raise
@@ -344,9 +351,7 @@ async def record_grant_onchain(
         if receipt['status'] != 1:
             raise ChainError("Transaction reverted")
         
-        # Return with 0x prefix for consistency
-        hash_hex = tx_hash.hex()
-        return hash_hex if hash_hex.startswith('0x') else f'0x{hash_hex}'
+        return ensure_hex_prefix(tx_hash.hex())
         
     except ChainConfigError:
         raise
@@ -446,7 +451,7 @@ async def revoke_grant_onchain(
         if receipt['status'] != 1:
             raise ChainError("Revocation transaction reverted")
         
-        return tx_hash.hex()
+        return ensure_hex_prefix(tx_hash.hex())
         
     except ChainConfigError:
         raise
@@ -492,7 +497,7 @@ async def get_grant_events(
                 "grantee_pubkey": e.args.granteePubkey,
                 "expiry_timestamp": e.args.expiryTimestamp,
                 "block_number": e.blockNumber,
-                "tx_hash": e.transactionHash.hex(),
+                "tx_hash": ensure_hex_prefix(e.transactionHash.hex()),
             }
             for e in events
         ]
@@ -532,3 +537,347 @@ def get_chain_status() -> dict:
             status["error"] = str(e)
     
     return status
+
+
+# ============================================================================
+# Hospital Access Grant Functions (Gas-Optimized using bytes32 and addresses)
+# ============================================================================
+
+# Extended ABI for gas-optimized grant functions
+GRANT_ACCESS_ABI = [
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "grantee", "type": "address"},
+            {"name": "expiry", "type": "uint256"}
+        ],
+        "name": "grantAccessByHash",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "cidHash", "type": "bytes32"}],
+        "name": "revokeAccessByHash",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "cidHash", "type": "bytes32"}],
+        "name": "recordUpload",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "cidHash", "type": "bytes32"}],
+        "name": "getLatestGrant",
+        "outputs": [
+            {"name": "grantee", "type": "address"},
+            {"name": "expiry", "type": "uint256"},
+            {"name": "active", "type": "bool"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "owner", "type": "address"},
+            {"indexed": False, "name": "grantee", "type": "address"},
+            {"indexed": False, "name": "expiry", "type": "uint256"}
+        ],
+        "name": "AccessGranted",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "owner", "type": "address"}
+        ],
+        "name": "AccessRevoked",
+        "type": "event"
+    },
+]
+
+
+def get_contract_with_grant_abi(w3: "Web3"):
+    """Get the HealthRecords contract with extended ABI for grant functions."""
+    config = get_config()
+    if not config["contract_address"]:
+        raise ChainConfigError(
+            "HEALTH_RECORDS_CONTRACT_ADDRESS environment variable is not set."
+        )
+    
+    # Combine ABIs
+    combined_abi = HEALTH_RECORDS_ABI + GRANT_ACCESS_ABI
+    
+    return w3.eth.contract(
+        address=Web3.to_checksum_address(config["contract_address"]),
+        abi=combined_abi,
+    )
+
+
+def compute_cid_hash(cid: str) -> bytes:
+    """Compute keccak256 hash of CID for gas-optimized contract calls."""
+    if not WEB3_AVAILABLE:
+        raise ChainConfigError("web3.py not available")
+    return Web3.keccak(text=cid)
+
+
+def is_valid_eth_address(address: str) -> bool:
+    """Check if a string is a valid Ethereum address (20 bytes / 40 hex chars)."""
+    if not address:
+        return False
+    # Remove 0x prefix if present
+    clean = address[2:] if address.startswith("0x") else address
+    # Must be exactly 40 hex characters (20 bytes)
+    if len(clean) != 40:
+        return False
+    try:
+        int(clean, 16)
+        return True
+    except ValueError:
+        return False
+
+
+def compute_grant_identifier(patient_identifier: str, hospital_identifier: str) -> str:
+    """
+    Compute deterministic grant identifier from patient and hospital identifiers.
+    
+    Args:
+        patient_identifier: Patient's UUID (or ETH address in future)
+        hospital_identifier: Hospital's UUID (or ETH address in future)
+        
+    Returns:
+        Grant identifier string
+    """
+    return f"hospital_access:{patient_identifier}:{hospital_identifier}"
+
+
+def compute_grant_cid_hash(patient_identifier: str, hospital_identifier: str) -> str:
+    """
+    Compute deterministic cidHash for on-chain grant.
+    
+    Args:
+        patient_identifier: Patient's UUID (or ETH address in future)
+        hospital_identifier: Hospital's UUID (or ETH address in future)
+        
+    Returns:
+        Hex string of the cidHash
+    """
+    if not WEB3_AVAILABLE:
+        raise ChainConfigError("web3.py not available")
+    grant_identifier = compute_grant_identifier(patient_identifier, hospital_identifier)
+    return Web3.keccak(text=grant_identifier).hex()
+
+
+async def grant_hospital_access_onchain(
+    patient_identifier: str,
+    hospital_identifier: str,
+    hospital_eth_address: str,
+    expiry_timestamp: int = 0,
+) -> dict:
+    """
+    Record hospital access grant on-chain using grantAccessByHash.
+    
+    This function grants a hospital permission to upload for a patient.
+    Uses a deterministic cidHash based on identifiers for tracking.
+    
+    Args:
+        patient_identifier: Patient's UUID (or ETH address in future)
+        hospital_identifier: Hospital's UUID (or ETH address in future)  
+        hospital_eth_address: Hospital's Ethereum address for the grantee field
+        expiry_timestamp: Unix timestamp when grant expires (0 = no expiry)
+        
+    Returns:
+        Dict with:
+            - tx_hash: Transaction hash
+            - cid_hash: The cidHash used (CRITICAL - store this for revocation!)
+            - grant_identifier: The identifier string used
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If transaction fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError(
+            "Chain not configured. Set SEPOLIA_RPC_URL, "
+            "HEALTH_RECORDS_CONTRACT_ADDRESS, and SIGNER_PRIVATE_KEY. "
+            "See: https://sepolia.dev/ for testnet setup."
+        )
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract_with_grant_abi(w3)
+        signer = get_signer(w3)
+        
+        # Create a deterministic cidHash for the patient-hospital relationship
+        # Using UUIDs for now, easy to swap to ETH addresses later
+        grant_identifier = compute_grant_identifier(patient_identifier, hospital_identifier)
+        cid_hash = Web3.keccak(text=grant_identifier)
+        cid_hash_hex = cid_hash.hex()
+        
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.grantAccessByHash(
+            cid_hash,
+            Web3.to_checksum_address(hospital_eth_address),
+            expiry_timestamp,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 150000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        # Sign and send
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        # Wait for receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Grant transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "cid_hash": cid_hash_hex,
+            "grant_identifier": grant_identifier,
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to grant hospital access on-chain: {str(e)}")
+
+
+async def revoke_hospital_access_onchain(
+    stored_cid_hash: str,
+) -> str:
+    """
+    Revoke hospital access grant on-chain using revokeAccessByHash.
+    
+    CRITICAL: This uses the exact cid_hash that was stored during grant.
+    Do NOT recompute it - use the value stored in hospital_access.grant_cid_hash.
+    
+    Args:
+        stored_cid_hash: The cid_hash from grant time (stored in hospital_access table)
+        
+    Returns:
+        Transaction hash
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If transaction fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError(
+            "Chain not configured. Set SEPOLIA_RPC_URL, "
+            "HEALTH_RECORDS_CONTRACT_ADDRESS, and SIGNER_PRIVATE_KEY."
+        )
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract_with_grant_abi(w3)
+        signer = get_signer(w3)
+        
+        # Convert hex string to bytes if needed
+        if isinstance(stored_cid_hash, str):
+            if stored_cid_hash.startswith("0x"):
+                cid_hash = bytes.fromhex(stored_cid_hash[2:])
+            else:
+                cid_hash = bytes.fromhex(stored_cid_hash)
+        else:
+            cid_hash = stored_cid_hash
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.revokeAccessByHash(cid_hash).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Revocation transaction reverted")
+        
+        return ensure_hex_prefix(tx_hash.hex())
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to revoke hospital access on-chain: {str(e)}")
+
+
+async def verify_hospital_access_onchain(
+    stored_cid_hash: str,
+    expected_hospital_address: str | None = None,
+) -> dict:
+    """
+    Verify hospital access grant on-chain using stored cidHash.
+    
+    Args:
+        stored_cid_hash: The cid_hash from hospital_access table
+        expected_hospital_address: Optional hospital address to verify against
+        
+    Returns:
+        Dict with grant status: {grantee, expiry, active, is_valid}
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If query fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured for verification")
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract_with_grant_abi(w3)
+        
+        # Convert hex string to bytes
+        if isinstance(stored_cid_hash, str):
+            if stored_cid_hash.startswith("0x"):
+                cid_hash = bytes.fromhex(stored_cid_hash[2:])
+            else:
+                cid_hash = bytes.fromhex(stored_cid_hash)
+        else:
+            cid_hash = stored_cid_hash
+        
+        result = contract.functions.getLatestGrant(cid_hash).call()
+        grantee, expiry, active = result
+        
+        # Check if expired
+        is_valid = active
+        if active and expiry > 0:
+            current_timestamp = int(datetime.now(timezone.utc).timestamp())
+            if current_timestamp > expiry:
+                is_valid = False
+        
+        hospital_matches = True
+        if expected_hospital_address:
+            hospital_matches = grantee.lower() == expected_hospital_address.lower() if grantee != "0x0000000000000000000000000000000000000000" else False
+        
+        return {
+            "grantee": grantee,
+            "expiry": expiry,
+            "active": active,
+            "is_valid": is_valid,
+            "hospital_matches": hospital_matches,
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to verify hospital access on-chain: {str(e)}")

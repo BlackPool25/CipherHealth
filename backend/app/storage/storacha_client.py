@@ -52,6 +52,13 @@ REQUEST_TIMEOUT = 60  # seconds
 # Default gateway URL for downloads
 DEFAULT_GATEWAY_URL = "https://storacha.link"
 
+# Fallback gateways when primary fails (in order of preference)
+FALLBACK_GATEWAYS = [
+    "https://ipfs.io",           # Protocol Labs gateway
+    "https://dweb.link",         # Protocol Labs dweb gateway
+    "https://cloudflare-ipfs.com",  # Cloudflare gateway
+]
+
 
 class StorachaError(Exception):
     """Base exception for Storacha client errors."""
@@ -364,81 +371,203 @@ def download_blob(cid: str) -> bytes:
             "requests library required. Install with: pip install requests"
         )
     
-    # Get gateway URL from environment
-    gateway_url = os.environ.get("STORACHA_GATEWAY_URL", DEFAULT_GATEWAY_URL)
+    # Get primary gateway URL from environment
+    primary_gateway = os.environ.get("STORACHA_GATEWAY_URL", DEFAULT_GATEWAY_URL)
     
-    # Construct gateway URL
-    # Try subdomain style first (recommended), fall back to path style
-    # Subdomain: https://<cid>.ipfs.storacha.link
-    # Path: https://storacha.link/ipfs/<cid>
-    
-    # Extract hostname for subdomain URL
-    if gateway_url.startswith("https://"):
-        host = gateway_url[8:]
-    elif gateway_url.startswith("http://"):
-        host = gateway_url[7:]
-    else:
-        host = gateway_url
-    
-    # Remove trailing slash
-    host = host.rstrip("/")
-    
-    # Try path-style URL (more reliable for programmatic access)
-    url = f"https://{host}/ipfs/{cid}"
-    
-    logger.info(f"Downloading CID {cid} from {url}...")
+    # Build list of gateways to try (primary + fallbacks)
+    gateways = [primary_gateway] + FALLBACK_GATEWAYS
     
     last_error = None
     
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.get(
-                url,
-                timeout=REQUEST_TIMEOUT,
-                headers={
-                    "Accept": "*/*",
-                    "User-Agent": "StorachaClient/1.0"
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.content
-                logger.info(f"Download successful. Size: {len(data)} bytes")
-                return data
-            elif response.status_code == 404:
-                raise StorachaDownloadError(
-                    f"CID not found: {cid}. "
-                    "Content may not exist or still propagating."
-                )
-            elif response.status_code == 429:
-                # Rate limited - use longer backoff
-                raise StorachaDownloadError(
-                    f"Rate limited by gateway. Status: {response.status_code}"
-                )
-            else:
-                raise StorachaDownloadError(
-                    f"Gateway returned status {response.status_code}: "
-                    f"{response.text[:200]}"
+    for gateway_url in gateways:
+        # Extract hostname for URL construction
+        if gateway_url.startswith("https://"):
+            host = gateway_url[8:]
+        elif gateway_url.startswith("http://"):
+            host = gateway_url[7:]
+        else:
+            host = gateway_url
+        
+        # Remove trailing slash
+        host = host.rstrip("/")
+        
+        # Try path-style URL (more reliable for programmatic access)
+        url = f"https://{host}/ipfs/{cid}"
+        
+        logger.info(f"Downloading CID {cid} from {url}...")
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.get(
+                    url,
+                    timeout=REQUEST_TIMEOUT,
+                    headers={
+                        "Accept": "*/*",
+                        "User-Agent": "StorachaClient/1.0"
+                    },
+                    allow_redirects=False,  # Don't follow redirects to broken subdomain URLs
                 )
                 
-        except requests.Timeout:
-            last_error = StorachaDownloadError(
-                f"Download timed out after {REQUEST_TIMEOUT}s"
-            )
-        except requests.RequestException as e:
-            last_error = StorachaDownloadError(f"Download failed: {e}")
-        except StorachaDownloadError as e:
-            last_error = e
+                # If we get a redirect, try the next gateway instead
+                if response.status_code in (301, 302, 307, 308):
+                    logger.warning(f"Gateway {host} redirected, trying next gateway...")
+                    break  # Try next gateway
+                
+                if response.status_code == 200:
+                    data = response.content
+                    logger.info(f"Download successful from {host}. Size: {len(data)} bytes")
+                    return data
+                elif response.status_code == 404:
+                    raise StorachaDownloadError(
+                        f"CID not found: {cid}. "
+                        "Content may not exist or still propagating."
+                    )
+                elif response.status_code == 429:
+                    # Rate limited - use longer backoff
+                    raise StorachaDownloadError(
+                        f"Rate limited by gateway. Status: {response.status_code}"
+                    )
+                else:
+                    raise StorachaDownloadError(
+                        f"Gateway returned status {response.status_code}: "
+                        f"{response.text[:200]}"
+                    )
+                    
+            except requests.Timeout:
+                last_error = StorachaDownloadError(
+                    f"Download timed out after {REQUEST_TIMEOUT}s"
+                )
+            except requests.RequestException as e:
+                last_error = StorachaDownloadError(f"Download failed: {e}")
+            except StorachaDownloadError as e:
+                last_error = e
+            
+            if attempt < MAX_RETRIES - 1:
+                delay = _exponential_backoff(attempt)
+                logger.warning(
+                    f"Download attempt {attempt + 1} from {host} failed. "
+                    f"Retrying in {delay}s... Error: {last_error}"
+                )
+                time.sleep(delay)
         
-        if attempt < MAX_RETRIES - 1:
-            delay = _exponential_backoff(attempt)
-            logger.warning(
-                f"Download attempt {attempt + 1} failed. "
-                f"Retrying in {delay}s... Error: {last_error}"
-            )
-            time.sleep(delay)
+        # If we exhausted retries on this gateway, try next one
+        logger.warning(f"Gateway {host} failed after retries, trying next gateway...")
     
-    raise last_error or StorachaDownloadError("Download failed after all retries")
+    raise last_error or StorachaDownloadError("Download failed after all gateways and retries")
+
+
+def remove_blob(cid: str) -> bool:
+    """
+    Remove/unpin a blob from Storacha space.
+    
+    This uses the `storacha rm` command to remove a CID from your space.
+    Note: This only removes your reference to the content. If other users
+    have pinned the same content, it will still be available on IPFS.
+    
+    IMPORTANT: Call this when:
+    - A file is being replaced (re-encrypted with new CEK)
+    - A grant is fully revoked and old encrypted data should be removed
+    - Cleaning up old/orphaned content
+    
+    Args:
+        cid: The IPFS Content Identifier to remove
+        
+    Returns:
+        True if removal succeeded
+        
+    Raises:
+        StorachaError: If removal fails
+    """
+    if not _check_cli_installed():
+        raise StorachaError(
+            "Storacha CLI not installed. Install with: npm install -g @storacha/cli"
+        )
+    
+    logger.info(f"Removing CID {cid} from Storacha space...")
+    
+    # Create clean environment
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("STORACHA_PRINCIPAL")}
+    
+    try:
+        result = subprocess.run(
+            ["storacha", "rm", cid],
+            capture_output=True,
+            text=True,
+            timeout=REQUEST_TIMEOUT,
+            env=clean_env
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Successfully removed CID {cid}")
+            return True
+        else:
+            # Check if it's a "not found" error (already removed or never existed)
+            stderr_lower = result.stderr.lower()
+            if "not found" in stderr_lower or "does not exist" in stderr_lower:
+                logger.warning(f"CID {cid} was not found in space (may already be removed)")
+                return True  # Consider this a success
+            
+            logger.error(f"Failed to remove CID {cid}: {result.stderr}")
+            raise StorachaError(f"Failed to remove CID: {result.stderr}")
+            
+    except subprocess.TimeoutExpired:
+        raise StorachaError(f"Remove operation timed out after {REQUEST_TIMEOUT}s")
+    except Exception as e:
+        raise StorachaError(f"Failed to remove CID: {e}")
+
+
+def list_uploads() -> list[dict]:
+    """
+    List all uploads in the current Storacha space.
+    
+    Useful for auditing and cleanup operations.
+    
+    Returns:
+        List of upload records with CID and metadata
+        
+    Raises:
+        StorachaError: If listing fails
+    """
+    if not _check_cli_installed():
+        raise StorachaError(
+            "Storacha CLI not installed. Install with: npm install -g @storacha/cli"
+        )
+    
+    logger.info("Listing uploads in Storacha space...")
+    
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("STORACHA_PRINCIPAL")}
+    
+    try:
+        result = subprocess.run(
+            ["storacha", "ls", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=REQUEST_TIMEOUT,
+            env=clean_env
+        )
+        
+        if result.returncode != 0:
+            raise StorachaError(f"Failed to list uploads: {result.stderr}")
+        
+        # Parse JSON output
+        uploads = []
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                try:
+                    upload = json.loads(line)
+                    uploads.append(upload)
+                except json.JSONDecodeError:
+                    # If not JSON, might be a raw CID
+                    if line.startswith("bafy"):
+                        uploads.append({"cid": line})
+        
+        logger.info(f"Found {len(uploads)} uploads")
+        return uploads
+        
+    except subprocess.TimeoutExpired:
+        raise StorachaError(f"List operation timed out after {REQUEST_TIMEOUT}s")
+    except Exception as e:
+        raise StorachaError(f"Failed to list uploads: {e}")
 
 
 def verify_blob(cid: str, expected_data: bytes) -> bool:

@@ -371,7 +371,7 @@ export default function RecordsPage() {
   // Redirect if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.push('/login');
+      router.push('/auth');
     }
   }, [authLoading, isAuthenticated, router]);
 

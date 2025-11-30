@@ -384,7 +384,24 @@ def reencrypt_capsule(
         raise ImportError("pyumbral is required. Install with: pip install pyumbral")
     
     capsule = Capsule.from_bytes(bytes.fromhex(capsule_hex))
-    kfrag = KeyFrag.from_bytes(bytes.fromhex(kfrag_hex))
+    
+    # Handle both pyumbral KeyFrag format (260 bytes) and 
+    # @nucypher/umbral-pre VerifiedKeyFrag format (310 bytes)
+    kfrag_bytes = bytes.fromhex(kfrag_hex)
+    
+    if len(kfrag_bytes) == 260:
+        # Standard pyumbral KeyFrag
+        kfrag = KeyFrag.from_bytes(kfrag_bytes)
+    elif len(kfrag_bytes) == 310:
+        # @nucypher/umbral-pre VerifiedKeyFrag format - not directly compatible
+        # This is a WASM library with different serialization
+        raise ValueError(
+            f"KFrag appears to be from @nucypher/umbral-pre WASM library (310 bytes). "
+            f"This is not compatible with pyumbral. Please regenerate kfrags server-side."
+        )
+    else:
+        raise ValueError(f"Expected 260 bytes for KeyFrag, got {len(kfrag_bytes)}")
+    
     delegating_pk = load_public_key(delegating_pk_hex)
     verifying_pk = load_public_key(verifying_pk_hex)
     
@@ -400,6 +417,111 @@ def reencrypt_capsule(
     cfrag = umbral_reencrypt(capsule, verified_kfrag)
     
     return bytes(cfrag).hex()
+
+
+def generate_kfrag_for_hospital(
+    delegating_sk_file: Optional[str] = None,
+    receiving_pk_hex: str = "",
+    signing_sk_file: Optional[str] = None,
+) -> tuple[str, str]:
+    """
+    Generate a kfrag for a hospital using server-side keys.
+    
+    This is the server-side alternative when client-side kfrag generation
+    uses incompatible libraries.
+    
+    Args:
+        delegating_sk_file: Patient's secret key file
+        receiving_pk_hex: Hospital's public key (hex)
+        signing_sk_file: Signing key file
+        
+    Returns:
+        Tuple of (kfrag_hex, verifying_key_hex)
+    """
+    if not UMBRAL_AVAILABLE:
+        raise ImportError("pyumbral is required")
+    
+    delegating_sk = load_secret_key(delegating_sk_file)
+    receiving_pk = load_public_key(receiving_pk_hex)
+    signing_sk = load_signing_key(signing_sk_file)
+    signer = Signer(signing_sk)
+    verifying_pk = signing_sk.public_key()
+    
+    kfrags = generate_kfrags(
+        delegating_sk=delegating_sk,
+        receiving_pk=receiving_pk,
+        signer=signer,
+        threshold=1,
+        shares=1,
+    )
+    
+    # kfrags[0] is VerifiedKeyFrag, extract inner KeyFrag
+    kfrag_hex = bytes(kfrags[0].kfrag).hex()
+    verifying_key_hex = bytes(verifying_pk).hex()
+    
+    return kfrag_hex, verifying_key_hex
+
+
+def generate_kfrag_from_secret_key_bytes(
+    delegating_sk_bytes_hex: str,
+    receiving_pk_hex: str,
+    signing_sk_bytes_hex: Optional[str] = None,
+) -> tuple[str, str]:
+    """
+    Generate kfrag from raw secret key bytes sent by frontend.
+    
+    This is the server-side kfrag generation for when client-side
+    libraries (like @nucypher/umbral-pre WASM) use incompatible
+    serialization formats.
+    
+    SECURITY NOTE: The secret key is only held in memory briefly and
+    should be cleared after use. All transport should be over HTTPS.
+    
+    Args:
+        delegating_sk_bytes_hex: Patient's secret key as hex (32 bytes raw)
+        receiving_pk_hex: Hospital's public key hex (33 bytes compressed)
+        signing_sk_bytes_hex: Signing key hex (32 bytes). If not provided,
+                              uses server's signing key
+    
+    Returns:
+        Tuple of (kfrag_hex, verifying_key_hex)
+        - kfrag_hex: 260-byte pyumbral-compatible KeyFrag
+        - verifying_key_hex: 33-byte compressed verifying public key
+    """
+    if not UMBRAL_AVAILABLE:
+        raise ImportError("pyumbral is required")
+    
+    # Reconstruct secret key from bytes
+    delegating_sk_bytes = bytes.fromhex(delegating_sk_bytes_hex)
+    delegating_sk = SecretKey.from_bytes(delegating_sk_bytes)
+    
+    # Reconstruct receiving public key
+    receiving_pk = load_public_key(receiving_pk_hex)
+    
+    # Use provided signing key or fall back to server's signing key
+    if signing_sk_bytes_hex:
+        signing_sk_bytes = bytes.fromhex(signing_sk_bytes_hex)
+        signing_sk = SecretKey.from_bytes(signing_sk_bytes)
+    else:
+        signing_sk = load_signing_key()
+    
+    signer = Signer(signing_sk)
+    verifying_pk = signing_sk.public_key()
+    
+    # Generate kfrags using pyumbral (will be compatible with pyumbral)
+    kfrags = generate_kfrags(
+        delegating_sk=delegating_sk,
+        receiving_pk=receiving_pk,
+        signer=signer,
+        threshold=1,
+        shares=1,
+    )
+    
+    # Extract inner KeyFrag for serialization (260 bytes)
+    kfrag_hex = bytes(kfrags[0].kfrag).hex()
+    verifying_key_hex = bytes(verifying_pk).hex()
+    
+    return kfrag_hex, verifying_key_hex
 
 
 def decrypt_original_data(
@@ -469,6 +591,73 @@ def decrypt_reencrypted_data(
         delegating_pk=delegating_pk,
         capsule=capsule,
         verified_cfrags=cfrags,
+        ciphertext=ciphertext,
+    )
+    
+    return plaintext
+
+
+def decrypt_reencrypted_from_bytes(
+    capsule_hex: str,
+    cfrag_hex: str,
+    ciphertext_hex: str,
+    delegating_pk_hex: str,
+    receiving_sk_bytes_hex: str,
+    receiving_pk_hex: str,
+    verifying_pk_hex: str,
+) -> bytes:
+    """
+    Decrypt re-encrypted data using hospital's raw secret key bytes.
+    
+    This is used for server-side decryption where the hospital sends
+    their secret key bytes for decryption.
+    
+    SECURITY NOTE: The secret key is only held in memory briefly.
+    All transport should be over HTTPS.
+
+    Args:
+        capsule_hex: Original Umbral capsule (hex string)
+        cfrag_hex: Ciphertext fragment from re-encryption (hex string)
+        ciphertext_hex: Encrypted CEK (hex string)
+        delegating_pk_hex: Patient's public key (hex string)
+        receiving_sk_bytes_hex: Hospital's secret key as hex (32 bytes raw)
+        receiving_pk_hex: Hospital's public key (hex string) for cfrag verification
+        verifying_pk_hex: Verifying public key (from kfrag generation) (hex string)
+
+    Returns:
+        Decrypted CEK bytes
+    """
+    if not UMBRAL_AVAILABLE:
+        raise ImportError("pyumbral is required. Install with: pip install pyumbral")
+    
+    # Reconstruct secret key from bytes
+    receiving_sk_bytes = bytes.fromhex(receiving_sk_bytes_hex)
+    receiving_sk = SecretKey.from_bytes(receiving_sk_bytes)
+    
+    # Load public keys
+    delegating_pk = load_public_key(delegating_pk_hex)
+    receiving_pk = load_public_key(receiving_pk_hex)
+    verifying_pk = load_public_key(verifying_pk_hex)
+    
+    # Parse capsule and cfrag
+    capsule = Capsule.from_bytes(bytes.fromhex(capsule_hex))
+    cfrag = CapsuleFrag.from_bytes(bytes.fromhex(cfrag_hex))
+    ciphertext = bytes.fromhex(ciphertext_hex)
+    
+    # Verify cfrag
+    verified_cfrag = cfrag.verify(
+        capsule=capsule,
+        verifying_pk=verifying_pk,
+        delegating_pk=delegating_pk,
+        receiving_pk=receiving_pk,
+    )
+    
+    # Decrypt using re-encrypted data
+    plaintext = decrypt_reencrypted(
+        receiving_sk=receiving_sk,
+        delegating_pk=delegating_pk,
+        capsule=capsule,
+        verified_cfrags=[verified_cfrag],
         ciphertext=ciphertext,
     )
     

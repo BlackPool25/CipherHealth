@@ -46,6 +46,7 @@ from app.utils.chain import (
     is_chain_configured,
     ChainError,
     ChainConfigError,
+    ensure_hex_prefix,
 )
 from app.utils.storage import upload_bytes_to_storacha
 
@@ -214,11 +215,7 @@ async def emit_access_revoked_onchain(cid: str) -> Optional[str]:
         if receipt['status'] != 1:
             raise ChainError("signalKeyRotation transaction reverted")
         
-        # Ensure 0x prefix for proper Etherscan URLs
-        tx_hash_hex = tx_hash.hex()
-        if not tx_hash_hex.startswith('0x'):
-            tx_hash_hex = '0x' + tx_hash_hex
-        return tx_hash_hex
+        return ensure_hex_prefix(tx_hash.hex())
         
     except (ChainConfigError, ChainError):
         raise
@@ -296,11 +293,7 @@ async def emit_upload_recorded_onchain(cid: str) -> Optional[str]:
         if receipt['status'] != 1:
             raise ChainError("UploadRecorded transaction reverted")
         
-        # Ensure 0x prefix for proper Etherscan URLs
-        tx_hash_hex = tx_hash.hex()
-        if not tx_hash_hex.startswith('0x'):
-            tx_hash_hex = '0x' + tx_hash_hex
-        return tx_hash_hex
+        return ensure_hex_prefix(tx_hash.hex())
         
     except (ChainConfigError, ChainError):
         raise
