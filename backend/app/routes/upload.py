@@ -15,6 +15,7 @@ Encryption Flow:
 5. Return CID and capsule metadata
 """
 
+import json
 import os
 import tempfile
 import uuid
@@ -23,7 +24,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id, get_file_by_id, get_user_by_uuid, create_grant
+from app.db import FileRecord, create_file_record, get_files_by_owner, get_user_by_id, get_file_by_id, get_user_by_uuid, create_grant, create_audit_log
 from app.routes.auth import get_current_user_from_token, require_current_user
 from app.routes.patients import get_hospital_access_record
 from app.utils.storage import upload_to_storacha, upload_bytes_to_storacha, is_valid_cid
@@ -233,6 +234,23 @@ async def upload_file(
             except Exception as chain_err:
                 # Log but don't fail the upload
                 print(f"Warning: Failed to record on-chain: {chain_err}")
+        
+        # Record upload in audit log
+        try:
+            await create_audit_log(
+                event_type="upload",
+                actor_id=current_user["id"],
+                patient_id=patient_id,
+                file_id=file_id,
+                cid=cid,
+                details=json.dumps({
+                    "filename": filename,
+                    "uploader_role": current_user.get("role", "unknown"),
+                }),
+                tx_hash=tx_hash,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create upload audit log: {e}")
         
         return UploadResponse(
             cid=cid,

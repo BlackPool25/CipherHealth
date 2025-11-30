@@ -605,6 +605,12 @@ export default function HospitalAccessPage() {
                       </div>
                       <div className="text-right text-sm text-gray-500">
                         <p>Granted: {formatDate(hospital.granted_at)}</p>
+                        {hospital.revoked_at && (
+                          <p className="text-rose-600">Revoked: {formatDate(hospital.revoked_at)}</p>
+                        )}
+                        {hospital.expires_at && hospital.access_status === 'expired' && (
+                          <p className="text-amber-600">Expired: {formatDate(hospital.expires_at)}</p>
+                        )}
                         {hospital.tx_hash && (
                           <TxHashDisplay txHash={hospital.tx_hash} />
                         )}

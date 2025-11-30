@@ -25,6 +25,7 @@ References:
 """
 
 import os
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -38,6 +39,7 @@ from app.db import (
     get_grants_by_granter,
     get_grants_for_file,
     create_file_record,
+    create_audit_log,
     FileRecord,
     revoke_grant,
 )
@@ -377,6 +379,27 @@ async def revoke_access(
     except ChainError as e:
         # Log but don't fail - grants are already revoked in DB
         print(f"Warning: On-chain revocation failed: {e}")
+    
+    # Record revoke event in audit log for each revoked grant
+    for grant in grants:
+        if grant.get("status") == "active":
+            try:
+                await create_audit_log(
+                    event_type="revoke",
+                    actor_id=current_user["id"],
+                    target_id=grant.get("grantee_id"),
+                    patient_id=current_user["id"],
+                    file_id=file_record["id"],
+                    cid=request.cid,
+                    details=json.dumps({
+                        "filename": file_record.get("filename"),
+                        "grantee_id": grant.get("grantee_id"),
+                        "grant_id": grant.get("id"),
+                    }),
+                    tx_hash=revoke_tx,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to create revoke audit log: {e}")
     
     return RevokeResponse(
         revoked=True,

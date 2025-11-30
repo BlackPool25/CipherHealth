@@ -21,6 +21,7 @@ Security Notes:
 """
 
 import os
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -33,6 +34,7 @@ from app.db import (
     AccessRequestStatus,
     approve_access_request,
     create_access_request,
+    create_audit_log,
     deny_access_request,
     get_access_request_by_id,
     get_approved_request_by_cid_and_pubkey,
@@ -53,7 +55,13 @@ from app.utils.umbral_utils import (
 
 # Import chain client (will be created)
 try:
-    from app.utils.chain import record_grant_onchain, verify_grant_onchain, ChainError
+    from app.utils.chain import (
+        record_grant_onchain, 
+        verify_grant_onchain, 
+        record_access_onchain,
+        record_grant_event_onchain,
+        ChainError,
+    )
     CHAIN_AVAILABLE = True
 except ImportError:
     CHAIN_AVAILABLE = False
@@ -346,6 +354,37 @@ async def approve_access(
                 detail="Failed to update access request",
             )
         
+        # Record grant in audit log
+        try:
+            # Get file info to find requester id
+            grantee_id = None
+            async with aiosqlite.connect(DATABASE_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT id FROM users WHERE public_key = ?",
+                    (requester_pubkey,)
+                )
+                row = await cursor.fetchone()
+                if row:
+                    grantee_id = row["id"]
+            
+            await create_audit_log(
+                event_type="grant",
+                actor_id=owner_id,
+                target_id=grantee_id,
+                patient_id=owner_id,
+                file_id=file_record.get("id"),
+                cid=access_req["cid"],
+                details=json.dumps({
+                    "filename": file_record.get("filename"),
+                    "expires_at": expires_at,
+                    "grantee_pubkey": requester_pubkey[:32] + "..." if requester_pubkey else None,
+                }),
+                tx_hash=tx_hash,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create grant audit log: {e}")
+        
         return ApproveAccessResponse(
             granted=True,
             tx_hash=tx_hash,
@@ -513,6 +552,46 @@ async def redeem_access(
         
         # Get Storacha download URL
         blob_url = get_ipfs_gateway_url(request.cid)
+        
+        # Record access event on-chain and in database
+        tx_hash = None
+        block_number = None
+        accessor_address = current_user.get("public_key", "")[:42] if current_user.get("public_key") else f"0x{current_user['id']:040x}"
+        
+        if CHAIN_AVAILABLE:
+            try:
+                owner = await get_user_by_id(file_record["owner_id"])
+                patient_uuid = owner.get("uuid", str(file_record["owner_id"])) if owner else str(file_record["owner_id"])
+                
+                access_result = await record_access_onchain(
+                    accessor_address=accessor_address,
+                    patient_identifier=patient_uuid,
+                    cid=request.cid,
+                )
+                tx_hash = access_result.get("tx_hash")
+                block_number = access_result.get("block_number")
+            except ChainError as e:
+                print(f"Warning: Failed to record access on-chain: {e}")
+        
+        # Always record in database audit log
+        try:
+            await create_audit_log(
+                event_type="access",
+                actor_id=current_user["id"],
+                target_id=file_record["owner_id"],
+                patient_id=file_record["owner_id"],
+                file_id=file_record.get("id"),
+                cid=request.cid,
+                details=json.dumps({
+                    "filename": file_record.get("filename"),
+                    "accessor_role": current_user.get("role", "unknown"),
+                    "accessor_name": current_user.get("username"),
+                }),
+                tx_hash=tx_hash,
+                block_number=block_number,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create audit log: {e}")
         
         return RedeemAccessResponse(
             reenc_capsule=reenc_capsule_b64,

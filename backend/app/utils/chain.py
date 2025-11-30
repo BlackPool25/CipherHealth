@@ -881,3 +881,200 @@ async def verify_hospital_access_onchain(
         raise
     except Exception as e:
         raise ChainError(f"Failed to verify hospital access on-chain: {str(e)}")
+
+
+async def record_access_onchain(
+    accessor_address: str,
+    patient_identifier: str,
+    cid: str,
+    file_hash: Optional[str] = None,
+) -> dict:
+    """
+    Record a file access event on-chain.
+    
+    This creates an immutable record that a hospital/accessor viewed a patient's file.
+    Uses the RecordAccessed event pattern.
+    
+    Args:
+        accessor_address: Ethereum address of the accessor (hospital)
+        patient_identifier: Patient's UUID or identifier
+        cid: Content identifier of the accessed file
+        file_hash: Optional hash of the file for verification
+        
+    Returns:
+        Dict with:
+            - tx_hash: Transaction hash
+            - block_number: Block number where the tx was included
+            - access_hash: The access record hash
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If transaction fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError(
+            "Chain not configured. Set SEPOLIA_RPC_URL, "
+            "HEALTH_RECORDS_CONTRACT_ADDRESS, and SIGNER_PRIVATE_KEY."
+        )
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract_with_grant_abi(w3)
+        signer = get_signer(w3)
+        
+        # Create a deterministic hash for this access event
+        access_identifier = f"access:{accessor_address}:{patient_identifier}:{cid}"
+        access_hash = Web3.keccak(text=access_identifier)
+        
+        # Build transaction - use setRecord for access logging
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        # We'll use setRecord with the access_hash to record the access
+        tx = contract.functions.setRecord(
+            f"access:{cid[:32]}:{accessor_address[:20]}"
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        # Sign and send
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        # Wait for receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Access recording transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "access_hash": access_hash.hex(),
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to record access on-chain: {str(e)}")
+
+
+async def record_grant_event_onchain(
+    granter_id: int,
+    grantee_id: int,
+    cid: str,
+    expiry_timestamp: int,
+) -> dict:
+    """
+    Record a grant event on-chain for audit purposes.
+    
+    Args:
+        granter_id: ID of the user granting access
+        grantee_id: ID of the user receiving access
+        cid: Content identifier of the file
+        expiry_timestamp: Unix timestamp when grant expires
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract(w3)
+        signer = get_signer(w3)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        # Use recordGrant with a synthetic pubkey that encodes the grant info
+        grant_pubkey = f"grant:{granter_id}:{grantee_id}"
+        
+        tx = contract.functions.recordGrant(
+            cid,
+            grant_pubkey,
+            expiry_timestamp,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Grant recording transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to record grant on-chain: {str(e)}")
+
+
+async def record_revoke_event_onchain(
+    revoker_id: int,
+    revokee_id: int,
+    cid: str,
+) -> dict:
+    """
+    Record a revoke event on-chain for audit purposes.
+    
+    Args:
+        revoker_id: ID of the user revoking access
+        revokee_id: ID of the user whose access is revoked
+        cid: Content identifier of the file
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_contract(w3)
+        signer = get_signer(w3)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        # Use revokeGrant with a synthetic pubkey
+        grant_pubkey = f"grant:{revoker_id}:{revokee_id}"
+        
+        tx = contract.functions.revokeGrant(
+            cid,
+            grant_pubkey,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Revoke recording transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to record revoke on-chain: {str(e)}")

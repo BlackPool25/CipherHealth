@@ -297,6 +297,27 @@ async def init_db():
         except Exception as e:
             print(f"Error generating UUIDs for existing users: {e}")
 
+        # Audit logs table - for blockchain-verified audit trail
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                actor_id INTEGER,
+                target_id INTEGER,
+                patient_id INTEGER,
+                file_id INTEGER,
+                cid TEXT,
+                details TEXT,
+                tx_hash TEXT,
+                block_number INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (actor_id) REFERENCES users(id),
+                FOREIGN KEY (target_id) REFERENCES users(id),
+                FOREIGN KEY (patient_id) REFERENCES users(id),
+                FOREIGN KEY (file_id) REFERENCES files(id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully.")
 
@@ -1078,6 +1099,182 @@ async def get_files_accessed_by_hospital(patient_id: int, hospital_id: int) -> l
             ORDER BY g.created_at DESC
             """,
             (patient_id, hospital_id),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+# ============================================================================
+# Database Operations - Audit Logs
+# ============================================================================
+
+
+async def create_audit_log(
+    event_type: str,
+    actor_id: Optional[int] = None,
+    target_id: Optional[int] = None,
+    patient_id: Optional[int] = None,
+    file_id: Optional[int] = None,
+    cid: Optional[str] = None,
+    details: Optional[str] = None,
+    tx_hash: Optional[str] = None,
+    block_number: Optional[int] = None,
+) -> int:
+    """
+    Create a new audit log entry.
+    
+    Args:
+        event_type: Type of event (access, grant, revoke, upload)
+        actor_id: ID of user performing the action
+        target_id: ID of the target user (e.g., patient for hospital access)
+        patient_id: ID of the patient whose records are involved
+        file_id: ID of the file accessed
+        cid: Content identifier of the file
+        details: JSON string with additional details
+        tx_hash: Blockchain transaction hash
+        block_number: Blockchain block number
+        
+    Returns:
+        ID of the created audit log entry
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO audit_logs (
+                event_type, actor_id, target_id, patient_id, 
+                file_id, cid, details, tx_hash, block_number
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_type, actor_id, target_id, patient_id, file_id, cid, details, tx_hash, block_number),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_audit_logs_for_patient(patient_id: int) -> list[dict]:
+    """
+    Get all audit logs related to a patient.
+    
+    Returns logs where the patient is either the actor, target, or patient_id.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   u1.username as actor_name, u1.role as actor_role,
+                   u2.username as target_name, u2.role as target_role,
+                   f.filename
+            FROM audit_logs al
+            LEFT JOIN users u1 ON al.actor_id = u1.id
+            LEFT JOIN users u2 ON al.target_id = u2.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE al.patient_id = ? OR al.actor_id = ? OR al.target_id = ?
+            ORDER BY al.created_at DESC
+            """,
+            (patient_id, patient_id, patient_id),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_audit_logs_by_type(patient_id: int, event_type: str) -> list[dict]:
+    """
+    Get audit logs of a specific type for a patient.
+    
+    Args:
+        patient_id: The patient's ID
+        event_type: Type of event to filter by (access, grant, revoke, upload)
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   u1.username as actor_name, u1.role as actor_role,
+                   u2.username as target_name, u2.role as target_role,
+                   f.filename
+            FROM audit_logs al
+            LEFT JOIN users u1 ON al.actor_id = u1.id
+            LEFT JOIN users u2 ON al.target_id = u2.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE (al.patient_id = ? OR al.actor_id = ? OR al.target_id = ?)
+              AND al.event_type = ?
+            ORDER BY al.created_at DESC
+            """,
+            (patient_id, patient_id, patient_id, event_type),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_grants_for_patient(patient_id: int) -> list[dict]:
+    """
+    Get all grants where the patient is the granter (active and revoked).
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT g.*, 
+                   u.username as grantee_name, u.role as grantee_role,
+                   f.filename, f.cid
+            FROM grants g
+            LEFT JOIN users u ON g.grantee_id = u.id
+            LEFT JOIN files f ON g.file_id = f.id
+            WHERE g.granter_id = ?
+            ORDER BY g.created_at DESC
+            """,
+            (patient_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_access_events_for_patient(patient_id: int) -> list[dict]:
+    """
+    Get all access events for a patient's records.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   u1.username as actor_name, u1.role as actor_role,
+                   f.filename
+            FROM audit_logs al
+            LEFT JOIN users u1 ON al.actor_id = u1.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE al.patient_id = ? AND al.event_type = 'access'
+            ORDER BY al.created_at DESC
+            """,
+            (patient_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_revoke_events_for_patient(patient_id: int) -> list[dict]:
+    """
+    Get all revoke events for a patient.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   u1.username as actor_name,
+                   u2.username as target_name, u2.role as target_role,
+                   f.filename
+            FROM audit_logs al
+            LEFT JOIN users u1 ON al.actor_id = u1.id
+            LEFT JOIN users u2 ON al.target_id = u2.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE al.patient_id = ? AND al.event_type = 'revoke'
+            ORDER BY al.created_at DESC
+            """,
+            (patient_id,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

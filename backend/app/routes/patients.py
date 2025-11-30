@@ -788,6 +788,7 @@ async def list_patient_hospitals(
             access_status=h["status"],
             granted_at=h.get("granted_at"),
             expires_at=h.get("expires_at"),
+            revoked_at=h.get("revoked_at"),
             file_count=h.get("file_count", 0),
             tx_hash=h.get("tx_hash"),
             on_chain_verified=on_chain_verified,
