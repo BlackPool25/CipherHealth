@@ -42,6 +42,9 @@ export default function UploadPage() {
   // Folder/Category selection
   const [selectedCategory, setSelectedCategory] = useState<string>('General');
   const categories = ['General', 'Lab Results', 'Imaging', 'Prescriptions', 'Referrals', 'Reports', 'Other'];
+  
+  // Custom display name (optional rename)
+  const [displayName, setDisplayName] = useState<string>('');
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/auth');
@@ -102,6 +105,7 @@ export default function UploadPage() {
     const files = e.target.files;
     if (files && files.length > 0) {
       setSelectedFile(files[0]);
+      setDisplayName(''); // Reset display name when new file selected
       setUploadProgress({ stage: 'idle', progress: 0, message: 'File selected' });
       setResult(null);
     }
@@ -136,7 +140,13 @@ export default function UploadPage() {
       const selectedPatient = patients.find(p => p.patient_uuid === selectedPatientUuid);
       
       // Upload for the selected patient using hospital upload endpoint
-      const response = await hospitalUploadFile(selectedFile, selectedPatientUuid, selectedCategory);
+      const response = await hospitalUploadFile(
+        selectedFile, 
+        selectedPatientUuid, 
+        selectedCategory,
+        undefined, // folder
+        displayName || undefined // custom display name
+      );
 
       if (response.error) {
         throw new Error(response.error);
@@ -163,6 +173,7 @@ export default function UploadPage() {
 
   const resetUpload = () => {
     setSelectedFile(null);
+    setDisplayName('');
     setUploadProgress({ stage: 'idle', progress: 0, message: 'Ready to upload' });
     setResult(null);
   };
@@ -317,6 +328,25 @@ export default function UploadPage() {
                   </div>
                 )}
               </div>
+
+              {/* Custom Display Name - shown after file is selected */}
+              {selectedFile && (
+                <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                  <label className="block text-sm font-medium text-amber-800 mb-2">
+                    ✏️ Rename File <span className="text-amber-600 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder={selectedFile.name}
+                    className="w-full p-3 border-2 border-amber-300 rounded-xl focus:border-amber-500 focus:outline-none bg-white text-gray-900 placeholder-gray-400"
+                  />
+                  <p className="mt-2 text-xs text-amber-700">
+                    This is how the file will appear in the patient's records. Leave empty to use "{selectedFile.name}"
+                  </p>
+                </div>
+              )}
 
               {/* Progress */}
               {uploadProgress.stage !== 'idle' && uploadProgress.stage !== 'error' && (

@@ -12,6 +12,7 @@ import FileViewer from '@/components/FileViewer';
 import { useAuth } from '@/contexts/AuthContext';
 import { getHospitalPatients, getHospitalPatientFiles, HospitalPatient } from '@/lib/api';
 import KeyManager from '@/lib/KeyManager';
+import { SEPOLIA_ETHERSCAN_TX } from '@/lib/constants';
 
 interface FileRecord {
   id: number;
@@ -27,6 +28,148 @@ interface FileRecord {
 interface PatientWithFiles extends HospitalPatient {
   files: FileRecord[];
 }
+
+// ============================================================================
+// Compact CID/TxHash Display Helpers
+// ============================================================================
+
+/** Copy text to clipboard with feedback */
+const copyToClipboard = async (text: string, onSuccess?: () => void) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    onSuccess?.();
+  } catch (err) {
+    console.error('Failed to copy:', err);
+  }
+};
+
+// ============================================================================
+// File Details Popup Component (Hospital View)
+// ============================================================================
+
+interface FileDetailsPopupProps {
+  file: FileRecord;
+  onClose: () => void;
+  onReleaseAccess: (file: FileRecord) => void;
+}
+
+function FileDetailsPopup({ file, onClose, onReleaseAccess }: FileDetailsPopupProps) {
+  const [copiedField, setCopiedField] = useState<'cid' | 'tx' | null>(null);
+  
+  const handleCopy = (text: string, field: 'cid' | 'tx') => {
+    copyToClipboard(text, () => {
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1500);
+    });
+  };
+
+  const gatewayUrl = `https://w3s.link/ipfs/${file.cid}`;
+  const normalizedTxHash = file.tx_hash ? (file.tx_hash.startsWith('0x') ? file.tx_hash : `0x${file.tx_hash}`) : null;
+  const etherscanUrl = normalizedTxHash ? `${SEPOLIA_ETHERSCAN_TX}/${normalizedTxHash}` : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+      <div className="glass-card p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">File Details</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+        </div>
+        
+        <div className="space-y-4">
+          {/* File Name */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">File Name</label>
+            <p className="text-gray-900 font-medium">{file.filename}</p>
+          </div>
+          
+          {/* CID */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Content ID (CID)</label>
+            <div className="flex items-start gap-2 mt-1">
+              <code className="flex-1 text-sm font-mono bg-gray-100 p-3 rounded-lg break-all text-gray-800">
+                {file.cid}
+              </code>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => handleCopy(file.cid, 'cid')}
+                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  title="Copy CID"
+                >
+                  {copiedField === 'cid' ? '✓' : '📋'}
+                </button>
+                <a
+                  href={gatewayUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 bg-indigo-100 hover:bg-indigo-200 rounded-lg transition-colors text-center"
+                  title="View on IPFS Gateway"
+                >
+                  🔗
+                </a>
+              </div>
+            </div>
+          </div>
+          
+          {/* Transaction Hash */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Transaction Hash</label>
+            {normalizedTxHash ? (
+              <div className="flex items-start gap-2 mt-1">
+                <code className="flex-1 text-sm font-mono bg-gray-100 p-3 rounded-lg break-all text-gray-800">
+                  {normalizedTxHash}
+                </code>
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => handleCopy(normalizedTxHash, 'tx')}
+                    className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    title="Copy Transaction Hash"
+                  >
+                    {copiedField === 'tx' ? '✓' : '📋'}
+                  </button>
+                  <a
+                    href={etherscanUrl!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-2 bg-green-100 hover:bg-green-200 rounded-lg transition-colors text-center"
+                    title="View on Etherscan"
+                  >
+                    ⛓️
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-400 italic mt-1">Not recorded on-chain</p>
+            )}
+          </div>
+          
+          {/* Created At */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Uploaded</label>
+            <p className="text-gray-900">{new Date(file.created_at).toLocaleString()}</p>
+          </div>
+        </div>
+        
+        {/* Action Buttons */}
+        <div className="flex gap-3 mt-6 pt-4 border-t border-gray-200">
+          <button onClick={onClose} className="flex-1 btn-ghost py-2">
+            Close
+          </button>
+          <button 
+            onClick={() => onReleaseAccess(file)} 
+            className="flex-1 btn-ghost py-2 text-rose-600 hover:bg-rose-50"
+            title="Voluntarily give up access to this file"
+          >
+            🔓 Release Access
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// File Category Helpers
+// ============================================================================
 
 // Get category - prefer database category, fallback to extracting from filename
 const getFileCategory = (file: FileRecord): { category: string; cleanName: string } => {
@@ -94,6 +237,14 @@ export default function PatientFilesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [patientSearchQuery, setPatientSearchQuery] = useState('');
+  
+  // File details popup state
+  const [detailsFile, setDetailsFile] = useState<FileRecord | null>(null);
+  
+  // Release access state
+  const [releaseLoading, setReleaseLoading] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const [releaseSuccess, setReleaseSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/auth');
@@ -390,7 +541,7 @@ export default function PatientFilesPage() {
                   </div>
                 </div>
 
-                {/* Files List */}
+                {/* Files Grid - Google Drive style */}
                 {displayedFiles.length === 0 ? (
                   <div className="glass-card p-12 text-center">
                     <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
@@ -404,34 +555,45 @@ export default function PatientFilesPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="glass-card overflow-hidden">
-                    <div className="divide-y divide-gray-100">
-                      {displayedFiles.map((file) => {
-                        const typeInfo = getFileTypeInfo(file.filename);
-                        const { cleanName } = getFileCategory(file);
-                        return (
-                          <div
-                            key={file.id}
-                            className="flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors"
-                          >
-                            <div className={`${typeInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center`}>
-                              <span className="text-xl">{typeInfo.icon}</span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-medium text-gray-900 truncate">{cleanName}</h3>
-                              <p className="text-sm text-gray-500">{formatDate(file.created_at)}</p>
-                            </div>
-                            <span className="badge-success hidden sm:inline-flex">🔒 Encrypted</span>
-                            <button
-                              onClick={() => setSelectedFile(file)}
-                              className="btn-neon text-sm py-2 px-4"
-                            >
-                              View
-                            </button>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {displayedFiles.map((file) => {
+                      const typeInfo = getFileTypeInfo(file.filename);
+                      const { cleanName } = getFileCategory(file);
+                      return (
+                        <div
+                          key={file.id}
+                          className="group bg-white hover:bg-gray-50 border border-gray-200 hover:border-indigo-300 rounded-xl p-4 cursor-pointer transition-all hover:shadow-md"
+                          onClick={() => setSelectedFile(file)}
+                        >
+                          {/* File icon - larger, centered */}
+                          <div className={`${typeInfo.bg} w-full aspect-square rounded-xl flex items-center justify-center mb-3 border border-gray-100`}>
+                            <span className="text-4xl">{typeInfo.icon}</span>
                           </div>
-                        );
-                      })}
-                    </div>
+                          
+                          {/* File name */}
+                          <h3 className="font-medium text-gray-900 text-sm truncate mb-0.5" title={cleanName}>
+                            {cleanName}
+                          </h3>
+                          
+                          {/* Date */}
+                          <p className="text-xs text-gray-400">{formatDate(file.created_at)}</p>
+                          
+                          {/* Hover actions */}
+                          <div className="flex items-center justify-center gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDetailsFile(file); }}
+                              className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
+                              title="Details & Release Access"
+                            >
+                              ℹ️
+                            </button>
+                            <span className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg text-sm" title="Encrypted">
+                              🔒
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </>
@@ -447,6 +609,48 @@ export default function PatientFilesPage() {
           cid={selectedFile.cid}
           onClose={() => setSelectedFile(null)}
         />
+      )}
+      
+      {/* File Details Popup with Release Access */}
+      {detailsFile && (
+        <FileDetailsPopup
+          file={detailsFile}
+          onClose={() => setDetailsFile(null)}
+          onReleaseAccess={async (file) => {
+            setDetailsFile(null);
+            setReleaseLoading(true);
+            setReleaseError(null);
+            try {
+              const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/revoke/hospital-release`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cid: file.cid }),
+              });
+              if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.detail || 'Failed to release access');
+              }
+              setReleaseSuccess(`Released access to ${file.filename}`);
+              // Remove file from local state
+              setFiles(prev => prev.filter(f => f.id !== file.id));
+              setTimeout(() => setReleaseSuccess(null), 3000);
+            } catch (err: any) {
+              setReleaseError(err.message || 'Failed to release access');
+              setTimeout(() => setReleaseError(null), 5000);
+            } finally {
+              setReleaseLoading(false);
+            }
+          }}
+        />
+      )}
+      
+      {/* Release Status Toast */}
+      {(releaseSuccess || releaseError) && (
+        <div className={`fixed bottom-4 right-4 z-50 p-4 rounded-xl shadow-lg ${
+          releaseSuccess ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+        }`}>
+          {releaseSuccess || releaseError}
+        </div>
       )}
     </Layout>
   );

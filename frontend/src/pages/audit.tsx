@@ -145,7 +145,7 @@ export default function AuditPage() {
   });
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) router.push('/login');
+    if (!authLoading && !isAuthenticated) router.push('/auth');
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {

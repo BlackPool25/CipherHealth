@@ -11,6 +11,7 @@ import Layout from '@/components/Layout';
 import FileViewer from '@/components/FileViewer';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPatientRecords, renameFile } from '@/lib/api';
+import { SEPOLIA_ETHERSCAN_TX } from '@/lib/constants';
 
 interface FileRecord {
   id: number;
@@ -26,6 +27,156 @@ interface FileRecord {
 }
 
 type ViewMode = 'grid' | 'list';
+
+// ============================================================================
+// Compact CID/TxHash Display Helpers
+// ============================================================================
+
+/** Truncate a string to first N and last M characters with ellipsis */
+const truncateMiddle = (str: string, startChars: number = 6, endChars: number = 4): string => {
+  if (!str || str.length <= startChars + endChars + 3) return str || '';
+  return `${str.slice(0, startChars)}...${str.slice(-endChars)}`;
+};
+
+/** Copy text to clipboard with feedback */
+const copyToClipboard = async (text: string, onSuccess?: () => void) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    onSuccess?.();
+  } catch (err) {
+    console.error('Failed to copy:', err);
+  }
+};
+
+// ============================================================================
+// File Details Popup Component
+// ============================================================================
+
+interface FileDetailsPopupProps {
+  file: FileRecord;
+  onClose: () => void;
+  onRename: (file: FileRecord) => void;
+  onShare: (file: FileRecord) => void;
+  onRevoke: (file: FileRecord) => void;
+}
+
+function FileDetailsPopup({ file, onClose, onRename, onShare, onRevoke }: FileDetailsPopupProps) {
+  const [copiedField, setCopiedField] = useState<'cid' | 'tx' | null>(null);
+  
+  const handleCopy = (text: string, field: 'cid' | 'tx') => {
+    copyToClipboard(text, () => {
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1500);
+    });
+  };
+
+  const gatewayUrl = `https://w3s.link/ipfs/${file.cid}`;
+  const etherscanUrl = file.tx_hash ? `${SEPOLIA_ETHERSCAN_TX}/${file.tx_hash}` : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+      <div className="glass-card p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">File Details</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+        </div>
+        
+        <div className="space-y-4">
+          {/* File Name */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">File Name</label>
+            <p className="text-gray-900 font-medium">{file.display_name || file.filename}</p>
+          </div>
+          
+          {/* CID */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Content ID (CID)</label>
+            <div className="flex items-start gap-2 mt-1">
+              <code className="flex-1 text-sm font-mono bg-gray-100 p-3 rounded-lg break-all text-gray-800">
+                {file.cid}
+              </code>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => handleCopy(file.cid, 'cid')}
+                  className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  title="Copy CID"
+                >
+                  {copiedField === 'cid' ? '✓' : '📋'}
+                </button>
+                <a
+                  href={gatewayUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 bg-indigo-100 hover:bg-indigo-200 rounded-lg transition-colors text-center"
+                  title="View on IPFS Gateway"
+                >
+                  🔗
+                </a>
+              </div>
+            </div>
+          </div>
+          
+          {/* Transaction Hash */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Transaction Hash</label>
+            {file.tx_hash ? (
+              <div className="flex items-start gap-2 mt-1">
+                <code className="flex-1 text-sm font-mono bg-gray-100 p-3 rounded-lg break-all text-gray-800">
+                  {file.tx_hash}
+                </code>
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => handleCopy(file.tx_hash!, 'tx')}
+                    className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    title="Copy Transaction Hash"
+                  >
+                    {copiedField === 'tx' ? '✓' : '📋'}
+                  </button>
+                  <a
+                    href={etherscanUrl!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-2 bg-green-100 hover:bg-green-200 rounded-lg transition-colors text-center"
+                    title="View on Etherscan"
+                  >
+                    ⛓️
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-400 italic mt-1">Not recorded on-chain</p>
+            )}
+          </div>
+          
+          {/* Created At */}
+          <div>
+            <label className="text-sm font-medium text-gray-500">Uploaded</label>
+            <p className="text-gray-900">{new Date(file.created_at).toLocaleString()}</p>
+          </div>
+        </div>
+        
+        {/* Action Buttons */}
+        <div className="flex gap-3 mt-6 pt-4 border-t border-gray-200">
+          <button onClick={() => onRename(file)} className="flex-1 btn-ghost py-2">
+            ✏️ Rename
+          </button>
+          <button onClick={() => onShare(file)} className="flex-1 btn-ghost py-2">
+            📤 Share
+          </button>
+          <button onClick={() => onRevoke(file)} className="flex-1 btn-ghost py-2 text-rose-600">
+            🔄 Revoke
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+// ============================================================================
+// File Category Helpers
+// ============================================================================
 
 // Get category - prefer database category, fallback to extracting from filename
 // If display_name is set, use that as the clean name
@@ -109,6 +260,9 @@ export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileRecord | null>(null);
+  
+  // File details popup state
+  const [detailsFile, setDetailsFile] = useState<FileRecord | null>(null);
   
   // Rename modal state
   const [renameModalFile, setRenameModalFile] = useState<FileRecord | null>(null);
@@ -377,48 +531,62 @@ export default function FilesPage() {
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {displayedFiles.map((file) => {
               const typeInfo = getFileTypeInfo(file.filename);
               const { cleanName, category } = getFileCategory(file);
               return (
-                <div key={file.id} className="glass-card p-5 group card-lift">
-                  <div className={`${typeInfo.bg} w-14 h-14 rounded-2xl flex items-center justify-center mb-4 border border-gray-100`}>
-                    <span className="text-2xl">{typeInfo.icon}</span>
+                <div 
+                  key={file.id} 
+                  className="group bg-white hover:bg-gray-50 border border-gray-200 hover:border-indigo-300 rounded-xl p-4 cursor-pointer transition-all hover:shadow-md"
+                  onClick={() => handleViewFile(file)}
+                >
+                  {/* File icon - larger, centered */}
+                  <div className={`${typeInfo.bg} w-full aspect-square rounded-xl flex items-center justify-center mb-3 border border-gray-100`}>
+                    <span className="text-4xl">{typeInfo.icon}</span>
                   </div>
-                  <h3 className="font-semibold text-gray-900 truncate mb-1" title={cleanName}>
+                  
+                  {/* File name */}
+                  <h3 className="font-medium text-gray-900 text-sm truncate mb-0.5" title={cleanName}>
                     {cleanName}
                   </h3>
-                  {!selectedCategory && (
-                    <p className="text-xs text-indigo-600 mb-1">
-                      {categoryIcons[category] || '📁'} {category}
-                    </p>
-                  )}
-                  <p className="text-sm text-gray-500 mb-3">{formatDate(file.created_at)}</p>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap">
+                  
+                  {/* Category & date */}
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    {!selectedCategory ? (
+                      <span className="truncate">{categoryIcons[category] || '📁'} {category}</span>
+                    ) : (
+                      <span>{formatDate(file.created_at)}</span>
+                    )}
+                  </div>
+                  
+                  {/* Hover actions - appear on hover */}
+                  <div className="flex items-center justify-center gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      onClick={() => handleViewFile(file)}
-                      className="flex-1 min-w-[60px] btn-neon text-sm py-2"
+                      onClick={(e) => { e.stopPropagation(); setDetailsFile(file); }}
+                      className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
+                      title="Details"
                     >
-                      View
+                      ℹ️
                     </button>
                     <button
-                      onClick={() => handleRenameClick(file)}
-                      className="btn-ghost text-sm py-2 px-2"
-                      title="Rename file"
+                      onClick={(e) => { e.stopPropagation(); handleRenameClick(file); }}
+                      className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
+                      title="Rename"
                     >
                       ✏️
                     </button>
                     <button
-                      onClick={() => handleShareFile(file)}
-                      className="btn-ghost text-sm py-2 px-2"
+                      onClick={(e) => { e.stopPropagation(); handleShareFile(file); }}
+                      className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
+                      title="Share"
                     >
                       📤
                     </button>
                     <button
-                      onClick={() => handleRevokeFile(file)}
-                      className="btn-ghost text-sm py-2 px-2 text-rose-600 hover:text-rose-700"
-                      title="Revoke access and rotate encryption key"
+                      onClick={(e) => { e.stopPropagation(); handleRevokeFile(file); }}
+                      className="w-8 h-8 flex items-center justify-center bg-rose-100 hover:bg-rose-200 rounded-lg text-sm"
+                      title="Revoke"
                     >
                       🔄
                     </button>
@@ -434,44 +602,53 @@ export default function FilesPage() {
                 const typeInfo = getFileTypeInfo(file.filename);
                 const { cleanName, category } = getFileCategory(file);
                 return (
-                  <div key={file.id} className="flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors">
-                    <div className={`${typeInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center border border-gray-100`}>
-                      <span className="text-xl">{typeInfo.icon}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">{cleanName}</h3>
-                      <div className="flex items-center gap-2 text-sm text-gray-500">
-                        {!selectedCategory && (
-                          <span className="text-indigo-600">
-                            {categoryIcons[category] || '📁'} {category}
-                          </span>
-                        )}
-                        <span>•</span>
-                        <span>{formatDate(file.created_at)}</span>
+                  <div key={file.id} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`${typeInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center border border-gray-100`}>
+                        <span className="text-xl">{typeInfo.icon}</span>
                       </div>
-                    </div>
-                    <span className="badge-success hidden sm:inline-flex">🔒 Encrypted</span>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => handleViewFile(file)} className="btn-neon text-sm py-2 px-4">
-                        View
-                      </button>
-                      <button
-                        onClick={() => handleRenameClick(file)}
-                        className="btn-ghost text-sm py-2 px-3"
-                        title="Rename file"
-                      >
-                        ✏️
-                      </button>
-                      <button onClick={() => handleShareFile(file)} className="btn-ghost text-sm py-2 px-3">
-                        Share
-                      </button>
-                      <button 
-                        onClick={() => handleRevokeFile(file)} 
-                        className="btn-ghost text-sm py-2 px-3 text-rose-600 hover:text-rose-700"
-                        title="Revoke access and rotate encryption key"
-                      >
-                        🔄
-                      </button>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 truncate">{cleanName}</h3>
+                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                          {!selectedCategory && (
+                            <span className="text-indigo-600">
+                              {categoryIcons[category] || '📁'} {category}
+                            </span>
+                          )}
+                          <span>•</span>
+                          <span>{formatDate(file.created_at)}</span>
+                        </div>
+                      </div>
+                      <span className="badge-success hidden sm:inline-flex">🔒 Encrypted</span>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleViewFile(file)} className="btn-neon text-sm py-2 px-4">
+                          View
+                        </button>
+                        <button
+                          onClick={() => setDetailsFile(file)}
+                          className="btn-ghost text-sm py-2 px-3"
+                          title="Show CID & TxHash"
+                        >
+                          ℹ️
+                        </button>
+                        <button
+                          onClick={() => handleRenameClick(file)}
+                          className="btn-ghost text-sm py-2 px-3"
+                          title="Rename file"
+                        >
+                          ✏️
+                        </button>
+                        <button onClick={() => handleShareFile(file)} className="btn-ghost text-sm py-2 px-3">
+                          Share
+                        </button>
+                        <button 
+                          onClick={() => handleRevokeFile(file)} 
+                          className="btn-ghost text-sm py-2 px-3 text-rose-600 hover:text-rose-700"
+                          title="Revoke access and rotate encryption key"
+                        >
+                          🔄
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -487,6 +664,26 @@ export default function FilesPage() {
           filename={selectedFile.filename}
           cid={selectedFile.cid}
           onClose={() => setSelectedFile(null)}
+        />
+      )}
+      
+      {/* File Details Popup */}
+      {detailsFile && (
+        <FileDetailsPopup
+          file={detailsFile}
+          onClose={() => setDetailsFile(null)}
+          onRename={(file) => {
+            setDetailsFile(null);
+            handleRenameClick(file);
+          }}
+          onShare={(file) => {
+            setDetailsFile(null);
+            handleShareFile(file);
+          }}
+          onRevoke={(file) => {
+            setDetailsFile(null);
+            handleRevokeFile(file);
+          }}
         />
       )}
       
