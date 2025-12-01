@@ -40,7 +40,8 @@ from app.routes.auth import require_current_user, get_current_user_from_token
 from app.utils.chain import (
     is_chain_configured,
     is_valid_eth_address,
-    set_record_onchain,
+    compute_keccak256,
+    record_upload_consent_registry,
     get_grant_events,
     verify_grant_onchain,
     grant_hospital_access_onchain,
@@ -745,12 +746,16 @@ async def create_base_profile_with_cid(
     # Store public key
     await update_user_public_key(patient_id, request.public_key)
     
-    # Record on-chain
+    # Record on-chain using ConsentRegistry
     upload_tx = None
     etherscan_url = None
     if is_chain_configured():
         try:
-            upload_tx = await set_record_onchain(request.profile_cid)
+            cid_hash = compute_keccak256(request.profile_cid)
+            patient_id_hash = compute_keccak256(str(patient_id))
+            # For self-profile uploads, the "uploader" is the patient themselves
+            uploader_id_hash = compute_keccak256(str(patient_id))
+            upload_tx = await record_upload_consent_registry(cid_hash, patient_id_hash, uploader_id_hash)
             etherscan_url = get_etherscan_url(upload_tx)
         except Exception as e:
             print(f"Warning: Failed to record on-chain: {e}")
@@ -1075,6 +1080,9 @@ async def revoke_hospital_access_endpoint(
         )
     
     stored_cid_hash = access_record.get("grant_cid_hash")
+    patient_identifier = access_record.get("patient_identifier")
+    hospital_identifier = access_record.get("hospital_identifier")
+    
     if not stored_cid_hash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1082,11 +1090,13 @@ async def revoke_hospital_access_endpoint(
                    "Cannot revoke on-chain. Please contact support.",
         )
     
-    # Record revocation on-chain using the STORED cid_hash
-    # This fixes the mismatch bug where grant used one identifier but revoke computed a different one
+    # Record revocation on-chain using ConsentRegistry.revokeAccess
+    # Uses stored identifiers to compute correct hashes
     try:
         tx_hash = await revoke_hospital_access_onchain(
             stored_cid_hash=stored_cid_hash,
+            patient_identifier=patient_identifier,
+            hospital_identifier=hospital_identifier,
         )
     except ChainConfigError as e:
         raise HTTPException(

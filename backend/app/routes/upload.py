@@ -34,7 +34,11 @@ from app.utils.umbral_utils import (
     encapsulate_cek,
     UMBRAL_AVAILABLE,
 )
-from app.utils.chain import is_chain_configured, set_record_onchain, verify_grant_onchain
+from app.utils.chain import (
+    is_chain_configured, 
+    verify_grant_onchain,
+    record_upload_consent_registry,
+)
 
 router = APIRouter()
 
@@ -226,11 +230,24 @@ async def upload_file(
         )
         file_id = await create_file_record(file_record)
         
-        # Optionally record on blockchain
+        # Optionally record on blockchain using ConsentRegistry
         tx_hash = None
         if is_chain_configured():
             try:
-                tx_hash = await set_record_onchain(cid)
+                # Get patient UUID for on-chain hashing
+                patient_uuid = owner.get("uuid", str(patient_id))
+                
+                # Use ConsentRegistry - patient is both uploader and owner
+                chain_result = await record_upload_consent_registry(
+                    cid=cid,
+                    patient_id=patient_uuid,
+                    hospital_id=patient_uuid,  # Self-upload
+                )
+                tx_hash = chain_result["tx_hash"]
+                
+                # CRITICAL: Update the file record with the tx_hash
+                from app.db import update_file_tx_hash
+                await update_file_tx_hash(file_id, tx_hash)
             except Exception as chain_err:
                 # Log but don't fail the upload
                 print(f"Warning: Failed to record on-chain: {chain_err}")
@@ -426,6 +443,7 @@ async def hospital_upload(
     patient_uuid: str = Form(...),
     category: Optional[str] = Form(None),
     folder: Optional[str] = Form(None),
+    display_name: Optional[str] = Form(None),
     current_user: dict = Depends(require_current_user),
 ):
     """
@@ -447,6 +465,7 @@ async def hospital_upload(
         patient_uuid: Patient's UUID (share-safe identifier)
         category: Optional category (e.g., "lab_results", "imaging")
         folder: Optional folder path for organization
+        display_name: Optional custom display name for the file
         current_user: Authenticated hospital user
         
     Returns:
@@ -506,11 +525,15 @@ async def hospital_upload(
         filename = file.filename or "unknown"
         
         # Build organized filename with folder and category
-        display_filename = filename
-        if folder:
-            display_filename = f"{folder}/{filename}"
-        if category:
-            display_filename = f"[{category}] {display_filename}"
+        # Use custom display_name if provided, otherwise build from parts
+        if display_name:
+            display_filename = display_name
+        else:
+            display_filename = filename
+            if folder:
+                display_filename = f"{folder}/{filename}"
+            if category:
+                display_filename = f"[{category}] {display_filename}"
         
         # Generate CEK and encrypt file content
         cek = generate_cek()
@@ -541,7 +564,7 @@ async def hospital_upload(
                 detail="Failed to get valid CID from Storacha",
             )
         
-        # Create file record in database (PATIENT is owner)
+        # Create file record in database (PATIENT is owner, hospital uploaded)
         file_record = FileRecord(
             cid=cid,
             owner_id=patient_id,
@@ -549,6 +572,7 @@ async def hospital_upload(
             encrypted_cek=cek_ciphertext,
             capsule=capsule_hex,
             category=category,  # Include category in file record
+            uploaded_by_hospital_id=hospital_id,  # Track which hospital uploaded
         )
         file_id = await create_file_record(file_record)
         
@@ -576,19 +600,83 @@ async def hospital_upload(
                 file_id=file_id,
                 expires_at=grant_expires,
             )
-            hospital_grant_id = await create_grant(grant)
+            # Use a placeholder reencryption key for hospital uploads
+            # The hospital already has the CEK since they encrypted the file
+            hospital_grant_id = await create_grant(grant, reencryption_key="hospital_upload")
+            
+            # Create audit log for the hospital grant (so it shows in patient's audit)
+            try:
+                await create_audit_log(
+                    event_type="grant",
+                    actor_id=patient_id,  # Patient is the granter
+                    target_id=hospital_id,  # Hospital is the grantee
+                    patient_id=patient_id,
+                    file_id=file_id,
+                    cid=cid,
+                    details=json.dumps({
+                        "filename": display_filename,
+                        "grantee_name": current_user.get("username"),
+                        "grantee_role": "hospital",
+                        "auto_grant": True,  # Flag to indicate this was auto-granted on upload
+                        "grant_reason": "hospital_upload",
+                        "status": "active",
+                    }),
+                    tx_hash=None,  # No separate on-chain tx for auto-grants
+                )
+            except Exception as e:
+                print(f"Warning: Failed to create hospital grant audit log: {e}")
         except Exception as grant_err:
             print(f"Warning: Failed to create hospital grant: {grant_err}")
         
-        # Record on-chain with actor info
+        # Record on-chain using ConsentRegistry
         upload_tx = None
         etherscan_url = None
         if is_chain_configured():
             try:
-                upload_tx = await set_record_onchain(cid)
+                # Get user identifiers for on-chain hashing
+                patient_user = await get_user_by_id(patient_id)
+                hospital_user = await get_user_by_id(hospital_id)
+                
+                patient_uuid = patient_user.get("uuid", str(patient_id)) if patient_user else str(patient_id)
+                hospital_uuid = hospital_user.get("uuid", str(hospital_id)) if hospital_user else str(hospital_id)
+                
+                # Use the new ConsentRegistry contract
+                chain_result = await record_upload_consent_registry(
+                    cid=cid,
+                    patient_id=patient_uuid,
+                    hospital_id=hospital_uuid,
+                )
+                upload_tx = chain_result["tx_hash"]
                 etherscan_url = get_etherscan_url(upload_tx)
+                
+                # CRITICAL: Update the file record with the tx_hash so patients can see it
+                from app.db import update_file_tx_hash
+                await update_file_tx_hash(file_id, upload_tx)
             except Exception as chain_err:
                 print(f"Warning: Failed to record on-chain: {chain_err}")
+        
+        # Record hospital upload in audit log
+        try:
+            import json
+            await create_audit_log(
+                event_type="upload",
+                actor_id=hospital_id,
+                target_id=patient_id,
+                patient_id=patient_id,
+                file_id=file_id,
+                cid=cid,
+                details=json.dumps({
+                    "filename": display_filename,
+                    "category": category,
+                    "uploader_role": "hospital",
+                    "uploader_name": current_user.get("username"),
+                    "is_hospital_upload": True,
+                    "action": "hospital_upload",
+                }),
+                tx_hash=upload_tx,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create hospital upload audit log: {e}")
         
         return HospitalUploadResponse(
             cid=cid,
@@ -693,18 +781,48 @@ async def hospital_upload_ciphertext(
         filename=filename,
         encrypted_cek=request.encrypted_cek,
         capsule=request.capsule_meta,
+        uploaded_by_hospital_id=hospital_id,  # Track which hospital uploaded
     )
     file_id = await create_file_record(file_record)
     
-    # Record on-chain
+    # Record on-chain using ConsentRegistry
     upload_tx = None
     etherscan_url = None
     if is_chain_configured():
         try:
-            upload_tx = await set_record_onchain(request.ciphertext_cid)
+            # Pass raw identifiers - the function will compute hashes internally
+            upload_tx_result = await record_upload_consent_registry(
+                cid=request.ciphertext_cid,
+                patient_id=str(request.patient_id),
+                hospital_id=str(hospital_id),
+            )
+            upload_tx = upload_tx_result["tx_hash"]
             etherscan_url = get_etherscan_url(upload_tx)
         except Exception as e:
             print(f"Warning: Failed to record on-chain: {e}")
+    
+    # Record hospital ciphertext upload in audit log
+    try:
+        import json
+        await create_audit_log(
+            event_type="upload",
+            actor_id=hospital_id,
+            target_id=request.patient_id,
+            patient_id=request.patient_id,
+            file_id=file_id,
+            cid=request.ciphertext_cid,
+            details=json.dumps({
+                "filename": filename,
+                "category": request.category,
+                "uploader_role": "hospital",
+                "uploader_name": current_user.get("username"),
+                "is_hospital_upload": True,
+                "action": "hospital_ciphertext_upload",
+            }),
+            tx_hash=upload_tx,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create ciphertext upload audit log: {e}")
     
     return HospitalUploadResponse(
         cid=request.ciphertext_cid,

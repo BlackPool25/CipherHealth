@@ -181,6 +181,209 @@ HEALTH_RECORDS_ABI = [
     }
 ]
 
+# ConsentRegistry ABI - New contract deployed on Sepolia
+# Contract: 0x87377255123A0c879e859a52814d3049435c7Fe2
+CONSENT_REGISTRY_ABI = [
+    # Events
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": True, "name": "hospitalIdHash", "type": "bytes32"},
+            {"indexed": False, "name": "actor", "type": "address"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "UploadRecorded",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": True, "name": "requesterHash", "type": "bytes32"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "AccessRequested",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": True, "name": "hospitalIdHash", "type": "bytes32"},
+            {"indexed": False, "name": "expiry", "type": "uint256"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "AccessGranted",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": True, "name": "hospitalIdHash", "type": "bytes32"},
+            {"indexed": False, "name": "actor", "type": "address"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "AccessRedeemed",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": True, "name": "hospitalIdHash", "type": "bytes32"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "AccessRevoked",
+        "type": "event"
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "cidHash", "type": "bytes32"},
+            {"indexed": True, "name": "patientIdHash", "type": "bytes32"},
+            {"indexed": False, "name": "fromHospitalHash", "type": "bytes32"},
+            {"indexed": False, "name": "toHospitalHash", "type": "bytes32"},
+            {"indexed": False, "name": "ts", "type": "uint256"}
+        ],
+        "name": "AccessTransferred",
+        "type": "event"
+    },
+    # Functions
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"}
+        ],
+        "name": "recordUpload",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "requesterHash", "type": "bytes32"}
+        ],
+        "name": "requestAccess",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"},
+            {"name": "expiry", "type": "uint256"}
+        ],
+        "name": "grantAccess",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"}
+        ],
+        "name": "redeemAccess",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"}
+        ],
+        "name": "revokeAccess",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "allowed", "type": "bool"}
+        ],
+        "name": "setTransferPreference",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "fromHospitalHash", "type": "bytes32"},
+            {"name": "toHospitalHash", "type": "bytes32"},
+            {"name": "newExpiry", "type": "uint256"}
+        ],
+        "name": "transferAccess",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"}
+        ],
+        "name": "isGrantValid",
+        "outputs": [{"name": "valid", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "cidHash", "type": "bytes32"},
+            {"name": "patientIdHash", "type": "bytes32"},
+            {"name": "hospitalIdHash", "type": "bytes32"}
+        ],
+        "name": "getGrant",
+        "outputs": [
+            {"name": "active", "type": "bool"},
+            {"name": "expiry", "type": "uint256"},
+            {"name": "createdAt", "type": "uint256"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "input", "type": "string"}],
+        "name": "computeHash",
+        "outputs": [{"name": "", "type": "bytes32"}],
+        "stateMutability": "pure",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "cidHash", "type": "bytes32"}],
+        "name": "uploadedCids",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"name": "patientIdHash", "type": "bytes32"}],
+        "name": "allowsTransfers",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
 
 # ============================================================================
 # Web3 Client
@@ -224,6 +427,35 @@ def get_contract(w3: "Web3"):
         address=Web3.to_checksum_address(config["contract_address"]),
         abi=HEALTH_RECORDS_ABI,
     )
+
+
+def get_consent_registry(w3: "Web3"):
+    """Get the ConsentRegistry contract instance."""
+    config = get_config()
+    if not config["contract_address"]:
+        raise ChainConfigError(
+            "HEALTH_RECORDS_CONTRACT_ADDRESS environment variable is not set. "
+            "Deploy the contract first using: npx hardhat run scripts/deployConsentRegistry.ts --network sepolia"
+        )
+    
+    return w3.eth.contract(
+        address=Web3.to_checksum_address(config["contract_address"]),
+        abi=CONSENT_REGISTRY_ABI,
+    )
+
+
+def compute_keccak256(value: str) -> bytes:
+    """
+    Compute keccak256 hash of a string value.
+    Used for hashing CIDs, patient IDs, and hospital IDs before on-chain storage.
+    
+    Args:
+        value: String value to hash
+        
+    Returns:
+        bytes32 hash
+    """
+    return Web3.keccak(text=value)
 
 
 def get_signer(w3: "Web3"):
@@ -682,7 +914,7 @@ async def grant_hospital_access_onchain(
     expiry_timestamp: int = 0,
 ) -> dict:
     """
-    Record hospital access grant on-chain using grantAccessByHash.
+    Record hospital access grant on-chain using ConsentRegistry.grantAccess.
     
     This function grants a hospital permission to upload for a patient.
     Uses a deterministic cidHash based on identifiers for tracking.
@@ -690,7 +922,7 @@ async def grant_hospital_access_onchain(
     Args:
         patient_identifier: Patient's UUID (or ETH address in future)
         hospital_identifier: Hospital's UUID (or ETH address in future)  
-        hospital_eth_address: Hospital's Ethereum address for the grantee field
+        hospital_eth_address: Hospital's Ethereum address (kept for backwards compatibility)
         expiry_timestamp: Unix timestamp when grant expires (0 = no expiry)
         
     Returns:
@@ -698,6 +930,8 @@ async def grant_hospital_access_onchain(
             - tx_hash: Transaction hash
             - cid_hash: The cidHash used (CRITICAL - store this for revocation!)
             - grant_identifier: The identifier string used
+            - patient_id_hash: Hash of patient identifier
+            - hospital_id_hash: Hash of hospital identifier
         
     Raises:
         ChainConfigError: If not configured
@@ -712,26 +946,31 @@ async def grant_hospital_access_onchain(
     
     try:
         w3 = get_web3()
-        contract = get_contract_with_grant_abi(w3)
+        contract = get_consent_registry(w3)
         signer = get_signer(w3)
         
         # Create a deterministic cidHash for the patient-hospital relationship
         # Using UUIDs for now, easy to swap to ETH addresses later
         grant_identifier = compute_grant_identifier(patient_identifier, hospital_identifier)
-        cid_hash = Web3.keccak(text=grant_identifier)
+        cid_hash = compute_keccak256(grant_identifier)
         cid_hash_hex = cid_hash.hex()
         
-        # Build transaction
+        # Compute patient and hospital id hashes
+        patient_id_hash = compute_keccak256(patient_identifier)
+        hospital_id_hash = compute_keccak256(hospital_identifier)
+        
+        # Build transaction using ConsentRegistry.grantAccess
         nonce = w3.eth.get_transaction_count(signer.address)
         
-        tx = contract.functions.grantAccessByHash(
+        tx = contract.functions.grantAccess(
             cid_hash,
-            Web3.to_checksum_address(hospital_eth_address),
+            patient_id_hash,
+            hospital_id_hash,
             expiry_timestamp,
         ).build_transaction({
             'from': signer.address,
             'nonce': nonce,
-            'gas': 150000,
+            'gas': 200000,
             'gasPrice': w3.eth.gas_price,
         })
         
@@ -749,6 +988,8 @@ async def grant_hospital_access_onchain(
             "tx_hash": ensure_hex_prefix(tx_hash.hex()),
             "cid_hash": cid_hash_hex,
             "grant_identifier": grant_identifier,
+            "patient_id_hash": patient_id_hash.hex(),
+            "hospital_id_hash": hospital_id_hash.hex(),
         }
         
     except ChainConfigError:
@@ -759,15 +1000,20 @@ async def grant_hospital_access_onchain(
 
 async def revoke_hospital_access_onchain(
     stored_cid_hash: str,
+    patient_identifier: str = None,
+    hospital_identifier: str = None,
 ) -> str:
     """
-    Revoke hospital access grant on-chain using revokeAccessByHash.
+    Revoke hospital access grant on-chain using ConsentRegistry.revokeAccess.
     
-    CRITICAL: This uses the exact cid_hash that was stored during grant.
-    Do NOT recompute it - use the value stored in hospital_access.grant_cid_hash.
+    CRITICAL: Uses the stored cid_hash and identifiers from hospital_access table.
+    If patient_identifier and hospital_identifier are provided, uses ConsentRegistry.
+    Otherwise falls back to legacy revokeAccessByHash (deprecated).
     
     Args:
         stored_cid_hash: The cid_hash from grant time (stored in hospital_access table)
+        patient_identifier: Patient UUID used for on-chain (from hospital_access table)
+        hospital_identifier: Hospital UUID used for on-chain (from hospital_access table)
         
     Returns:
         Transaction hash
@@ -784,7 +1030,6 @@ async def revoke_hospital_access_onchain(
     
     try:
         w3 = get_web3()
-        contract = get_contract_with_grant_abi(w3)
         signer = get_signer(w3)
         
         # Convert hex string to bytes if needed
@@ -798,12 +1043,33 @@ async def revoke_hospital_access_onchain(
         
         nonce = w3.eth.get_transaction_count(signer.address)
         
-        tx = contract.functions.revokeAccessByHash(cid_hash).build_transaction({
-            'from': signer.address,
-            'nonce': nonce,
-            'gas': 100000,
-            'gasPrice': w3.eth.gas_price,
-        })
+        # Use ConsentRegistry if we have all identifiers
+        if patient_identifier and hospital_identifier:
+            contract = get_consent_registry(w3)
+            
+            # Compute hashes from identifiers
+            patient_id_hash = compute_keccak256(patient_identifier)
+            hospital_id_hash = compute_keccak256(hospital_identifier)
+            
+            tx = contract.functions.revokeAccess(
+                cid_hash,
+                patient_id_hash,
+                hospital_id_hash,
+            ).build_transaction({
+                'from': signer.address,
+                'nonce': nonce,
+                'gas': 150000,
+                'gasPrice': w3.eth.gas_price,
+            })
+        else:
+            # Legacy fallback - try old contract
+            contract = get_contract_with_grant_abi(w3)
+            tx = contract.functions.revokeAccessByHash(cid_hash).build_transaction({
+                'from': signer.address,
+                'nonce': nonce,
+                'gas': 100000,
+                'gasPrice': w3.eth.gas_price,
+            })
         
         signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
@@ -1078,3 +1344,455 @@ async def record_revoke_event_onchain(
         raise
     except Exception as e:
         raise ChainError(f"Failed to record revoke on-chain: {str(e)}")
+
+
+# ============================================================================
+# ConsentRegistry Functions (New Contract)
+# ============================================================================
+
+async def record_upload_consent_registry(
+    cid: str,
+    patient_id: str,
+    hospital_id: str,
+) -> dict:
+    """
+    Record an upload on-chain using the ConsentRegistry contract.
+    
+    All identifiers are hashed with keccak256 before on-chain storage
+    to protect PHI while maintaining audit trail.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        patient_id: Patient identifier (will be hashed)
+        hospital_id: Hospital identifier (will be hashed)
+        
+    Returns:
+        Dict with tx_hash, block_number, and hashes
+        
+    Raises:
+        ChainConfigError: If not configured
+        ChainError: If transaction fails
+    """
+    if not is_chain_configured():
+        raise ChainConfigError(
+            "Chain not configured. Set SEPOLIA_RPC_URL, "
+            "HEALTH_RECORDS_CONTRACT_ADDRESS, and SIGNER_PRIVATE_KEY."
+        )
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        signer = get_signer(w3)
+        
+        # Compute hashes
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        hospital_id_hash = compute_keccak256(hospital_id)
+        
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.recordUpload(
+            cid_hash,
+            patient_id_hash,
+            hospital_id_hash,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 150000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        # Sign and send
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        # Wait for receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "cid_hash": cid_hash.hex(),
+            "patient_id_hash": patient_id_hash.hex(),
+            "hospital_id_hash": hospital_id_hash.hex(),
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to record upload on-chain: {str(e)}")
+
+
+async def request_access_consent_registry(
+    cid: str,
+    patient_id: str,
+    requester_id: str,
+) -> dict:
+    """
+    Request access to a file on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        patient_id: Patient identifier (will be hashed)
+        requester_id: Requester (hospital) identifier (will be hashed)
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        signer = get_signer(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        requester_hash = compute_keccak256(requester_id)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.requestAccess(
+            cid_hash,
+            patient_id_hash,
+            requester_hash,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 150000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "cid_hash": cid_hash.hex(),
+            "patient_id_hash": patient_id_hash.hex(),
+            "requester_hash": requester_hash.hex(),
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to request access on-chain: {str(e)}")
+
+
+async def grant_access_consent_registry(
+    cid: str,
+    patient_id: str,
+    hospital_id: str,
+    expiry: int,
+) -> dict:
+    """
+    Grant access to a file on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        patient_id: Patient identifier (will be hashed)
+        hospital_id: Hospital identifier (will be hashed)
+        expiry: Unix timestamp when grant expires (0 = no expiry)
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        signer = get_signer(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        hospital_id_hash = compute_keccak256(hospital_id)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.grantAccess(
+            cid_hash,
+            patient_id_hash,
+            hospital_id_hash,
+            expiry,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "cid_hash": cid_hash.hex(),
+            "patient_id_hash": patient_id_hash.hex(),
+            "hospital_id_hash": hospital_id_hash.hex(),
+            "expiry": expiry,
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to grant access on-chain: {str(e)}")
+
+
+async def revoke_access_consent_registry(
+    cid: str,
+    patient_id: str,
+    hospital_id: str,
+) -> dict:
+    """
+    Revoke access to a file on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        patient_id: Patient identifier (will be hashed)
+        hospital_id: Hospital identifier (will be hashed)
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        signer = get_signer(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        hospital_id_hash = compute_keccak256(hospital_id)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.revokeAccess(
+            cid_hash,
+            patient_id_hash,
+            hospital_id_hash,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 150000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "cid_hash": cid_hash.hex(),
+            "patient_id_hash": patient_id_hash.hex(),
+            "hospital_id_hash": hospital_id_hash.hex(),
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to revoke access on-chain: {str(e)}")
+
+
+async def transfer_access_consent_registry(
+    cid: str,
+    patient_id: str,
+    from_hospital_id: str,
+    to_hospital_id: str,
+    new_expiry: int,
+) -> dict:
+    """
+    Transfer access from one hospital to another on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier of the file
+        patient_id: Patient identifier (will be hashed)
+        from_hospital_id: Source hospital identifier (will be hashed)
+        to_hospital_id: Target hospital identifier (will be hashed)
+        new_expiry: Unix timestamp when new grant expires
+        
+    Returns:
+        Dict with tx_hash and block_number
+    """
+    if not is_chain_configured():
+        raise ChainConfigError("Chain not configured")
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        signer = get_signer(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        from_hospital_hash = compute_keccak256(from_hospital_id)
+        to_hospital_hash = compute_keccak256(to_hospital_id)
+        
+        nonce = w3.eth.get_transaction_count(signer.address)
+        
+        tx = contract.functions.transferAccess(
+            cid_hash,
+            patient_id_hash,
+            from_hospital_hash,
+            to_hospital_hash,
+            new_expiry,
+        ).build_transaction({
+            'from': signer.address,
+            'nonce': nonce,
+            'gas': 250000,
+            'gasPrice': w3.eth.gas_price,
+        })
+        
+        signed_tx = w3.eth.account.sign_transaction(tx, signer.key)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        
+        if receipt['status'] != 1:
+            raise ChainError("Transaction reverted")
+        
+        return {
+            "tx_hash": ensure_hex_prefix(tx_hash.hex()),
+            "block_number": receipt['blockNumber'],
+            "cid_hash": cid_hash.hex(),
+            "patient_id_hash": patient_id_hash.hex(),
+            "from_hospital_hash": from_hospital_hash.hex(),
+            "to_hospital_hash": to_hospital_hash.hex(),
+        }
+        
+    except ChainConfigError:
+        raise
+    except Exception as e:
+        raise ChainError(f"Failed to transfer access on-chain: {str(e)}")
+
+
+async def verify_upload_on_chain(cid: str) -> bool:
+    """
+    Verify that a CID has been recorded on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier to verify
+        
+    Returns:
+        True if the CID has been recorded on-chain
+    """
+    if not is_chain_configured():
+        return False
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        
+        return contract.functions.uploadedCids(cid_hash).call()
+        
+    except Exception:
+        return False
+
+
+async def verify_grant_on_chain(
+    cid: str,
+    patient_id: str,
+    hospital_id: str,
+) -> bool:
+    """
+    Verify that a grant is valid on-chain.
+    
+    Args:
+        cid: IPFS Content Identifier
+        patient_id: Patient identifier
+        hospital_id: Hospital identifier
+        
+    Returns:
+        True if the grant is active and not expired
+    """
+    if not is_chain_configured():
+        return False
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        
+        cid_hash = compute_keccak256(cid)
+        patient_id_hash = compute_keccak256(patient_id)
+        hospital_id_hash = compute_keccak256(hospital_id)
+        
+        return contract.functions.isGrantValid(
+            cid_hash,
+            patient_id_hash,
+            hospital_id_hash,
+        ).call()
+        
+    except Exception:
+        return False
+
+
+async def get_consent_registry_events(
+    event_name: str,
+    from_block: int = 0,
+    to_block: int = None,
+) -> list[dict]:
+    """
+    Get events from the ConsentRegistry contract.
+    
+    Args:
+        event_name: Name of the event (UploadRecorded, AccessGranted, etc.)
+        from_block: Starting block number
+        to_block: Ending block number (None = latest)
+        
+    Returns:
+        List of event dictionaries
+    """
+    if not is_chain_configured():
+        return []
+    
+    try:
+        w3 = get_web3()
+        contract = get_consent_registry(w3)
+        
+        if to_block is None:
+            to_block = w3.eth.block_number
+        
+        event = getattr(contract.events, event_name)
+        logs = event.get_logs(fromBlock=from_block, toBlock=to_block)
+        
+        return [
+            {
+                "event": event_name,
+                "args": dict(log.args),
+                "block_number": log.blockNumber,
+                "tx_hash": ensure_hex_prefix(log.transactionHash.hex()),
+            }
+            for log in logs
+        ]
+        
+    except Exception as e:
+        print(f"Error getting events: {e}")
+        return []
+

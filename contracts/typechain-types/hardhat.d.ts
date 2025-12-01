@@ -14,10 +14,19 @@ import * as Contracts from ".";
 declare module "hardhat/types/runtime" {
   interface HardhatEthersHelpers extends HardhatEthersHelpersBase {
     getContractFactory(
+      name: "ConsentRegistry",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.ConsentRegistry__factory>;
+    getContractFactory(
       name: "HealthRecords",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.HealthRecords__factory>;
 
+    getContractAt(
+      name: "ConsentRegistry",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.ConsentRegistry>;
     getContractAt(
       name: "HealthRecords",
       address: string | ethers.Addressable,
@@ -25,10 +34,19 @@ declare module "hardhat/types/runtime" {
     ): Promise<Contracts.HealthRecords>;
 
     deployContract(
+      name: "ConsentRegistry",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.ConsentRegistry>;
+    deployContract(
       name: "HealthRecords",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.HealthRecords>;
 
+    deployContract(
+      name: "ConsentRegistry",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.ConsentRegistry>;
     deployContract(
       name: "HealthRecords",
       args: any[],

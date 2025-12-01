@@ -85,6 +85,9 @@ from app.db import (
     get_grant_events_for_patient,
     get_access_events_for_patient,
     get_revoke_events_for_patient,
+    get_audit_logs_for_hospital,
+    get_hospital_access_events,
+    get_hospital_upload_events,
 )
 from app.routes.auth import require_current_user
 from app.utils.chain import is_chain_configured
@@ -312,6 +315,108 @@ async def get_user_audit_logs(user_id: int):
     )
 
 
+class HospitalAuditResponse(BaseModel):
+    """Response for hospital audit log queries."""
+    
+    all_logs: list[dict]
+    access_events: list[dict]
+    upload_events: list[dict]
+    total_count: int
+    access_count: int
+    upload_count: int
+    source: str
+
+
+@router.get("/hospital/my-logs", response_model=HospitalAuditResponse)
+async def get_hospital_audit_logs(
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get audit logs for the currently authenticated hospital.
+    
+    Shows all activity the hospital has performed:
+    - File uploads for patients
+    - File access/downloads
+    - Grant events
+    
+    This endpoint is for HOSPITAL users only.
+    
+    Returns:
+        Categorized audit logs with counts
+        
+    Example curl:
+        curl -H "Authorization: Bearer <token>" http://localhost:8000/audit/hospital/my-logs
+    """
+    # Verify caller is a hospital
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can access this endpoint",
+        )
+    
+    hospital_id = current_user["id"]
+    
+    # Get all audit logs where hospital was the actor
+    all_logs_raw = await get_audit_logs_for_hospital(hospital_id)
+    access_events_raw = await get_hospital_access_events(hospital_id)
+    upload_events_raw = await get_hospital_upload_events(hospital_id)
+    
+    # Format logs
+    all_logs = []
+    for log in all_logs_raw:
+        all_logs.append({
+            "id": log.get("id"),
+            "event_type": log.get("event_type"),
+            "patient_id": log.get("patient_id"),
+            "patient_name": log.get("patient_name"),
+            "file_id": log.get("file_id"),
+            "filename": log.get("filename"),
+            "cid": log.get("cid"),
+            "details": log.get("details"),
+            "tx_hash": log.get("tx_hash"),
+            "block_number": log.get("block_number"),
+            "timestamp": format_timestamp(log.get("created_at")),
+        })
+    
+    access_events = []
+    for log in access_events_raw:
+        access_events.append({
+            "id": log.get("id"),
+            "patient_id": log.get("patient_id"),
+            "patient_name": log.get("patient_name"),
+            "file_id": log.get("file_id"),
+            "filename": log.get("filename"),
+            "cid": log.get("cid"),
+            "details": log.get("details"),
+            "tx_hash": log.get("tx_hash"),
+            "timestamp": format_timestamp(log.get("created_at")),
+        })
+    
+    upload_events = []
+    for log in upload_events_raw:
+        upload_events.append({
+            "id": log.get("id"),
+            "patient_id": log.get("patient_id"),
+            "patient_name": log.get("patient_name"),
+            "file_id": log.get("file_id"),
+            "filename": log.get("filename"),
+            "cid": log.get("cid"),
+            "details": log.get("details"),
+            "tx_hash": log.get("tx_hash"),
+            "timestamp": format_timestamp(log.get("created_at")),
+        })
+    
+    return HospitalAuditResponse(
+        all_logs=all_logs,
+        access_events=access_events,
+        upload_events=upload_events,
+        total_count=len(all_logs),
+        access_count=len(access_events),
+        upload_count=len(upload_events),
+        source="database",
+    )
+
+
 @router.get("/my-logs", response_model=CategorizedAuditResponse)
 async def get_my_audit_logs(
     current_user: dict = Depends(require_current_user),
@@ -334,6 +439,10 @@ async def get_my_audit_logs(
     Example curl:
         curl -H "Authorization: Bearer <token>" http://localhost:8000/audit/my-logs
     """
+    # If hospital, redirect to hospital audit endpoint
+    if current_user.get("role") == "hospital":
+        return await get_hospital_audit_logs(current_user)
+    
     return await _get_categorized_audit_logs_for_user(current_user["id"], current_user)
 
 

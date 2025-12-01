@@ -36,6 +36,42 @@
       "artifacts": [
         "HealthRecords"
       ]
+    },
+    "/home/lightdesk/Projects/Decent-Hospital/contracts/contracts/ConsentRegistry.sol": {
+      "lastModificationDate": 1764556843000,
+      "contentHash": "a43879849622337e06b3fdf2a1d2e4cc",
+      "sourceName": "contracts/ConsentRegistry.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ConsentRegistry"
+      ]
     }
   }
 }

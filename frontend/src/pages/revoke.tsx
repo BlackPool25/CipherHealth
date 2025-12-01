@@ -54,6 +54,10 @@ export default function RevokePage() {
   const [newCid, setNewCid] = useState<string | null>(null);
   const [newUploadTx, setNewUploadTx] = useState<string | null>(null);
   
+  // Password verification
+  const [password, setPassword] = useState<string>('');
+  const [isRevoking, setIsRevoking] = useState(false);
+  
   // For demo: simulated encryption (in production, use real Umbral)
   const [newCek, setNewCek] = useState<string | null>(null);
   const [newCapsule, setNewCapsule] = useState<string | null>(null);
@@ -101,20 +105,30 @@ export default function RevokePage() {
 
   const handleRevoke = async () => {
     if (!selectedFile) return;
+    if (!password.trim()) {
+      setError('Please enter your password to confirm revocation');
+      return;
+    }
+    
     setError(null);
+    setIsRevoking(true);
     
     try {
-      const result = await revokeAccess(selectedFile.cid);
+      const result = await revokeAccess(selectedFile.cid, password);
       if (result.error) {
         setError(result.error);
+        setIsRevoking(false);
         return;
       }
       
       setRevokeTx(result.data?.revoke_tx || null);
       setRevokedCount(result.data?.revoked_grants_count || 0);
+      setPassword('');
       setStep('download');
     } catch (err) {
       setError('Failed to revoke access. Please try again.');
+    } finally {
+      setIsRevoking(false);
     }
   };
 
@@ -380,17 +394,39 @@ export default function RevokePage() {
                 </div>
               </div>
               
-              <p className="text-gray-600 mb-6">
+              <p className="text-gray-600 mb-4">
                 This will immediately revoke all active grants for this file. 
                 Grantees will no longer be able to access the file.
               </p>
               
+              {/* Password verification */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+                <label className="block text-sm font-medium text-amber-800 mb-2">
+                  🔒 Enter your password to confirm
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Your account password"
+                  className="w-full px-4 py-3 border-2 border-amber-200 rounded-xl focus:border-amber-500 focus:outline-none bg-white"
+                  onKeyDown={(e) => e.key === 'Enter' && handleRevoke()}
+                />
+                <p className="text-xs text-amber-700 mt-2">
+                  This is a security measure to prevent accidental revocations.
+                </p>
+              </div>
+              
               <div className="flex gap-3">
-                <button onClick={() => setStep('select')} className="btn-ghost">
+                <button onClick={() => { setStep('select'); setPassword(''); }} className="btn-ghost">
                   Back
                 </button>
-                <button onClick={handleRevoke} className="btn-neon bg-rose-500 hover:bg-rose-600">
-                  Revoke Access
+                <button 
+                  onClick={handleRevoke} 
+                  disabled={isRevoking || !password.trim()}
+                  className="btn-neon bg-rose-500 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isRevoking ? 'Revoking...' : 'Revoke Access'}
                 </button>
               </div>
             </div>

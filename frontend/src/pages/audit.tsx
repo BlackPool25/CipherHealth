@@ -77,12 +77,12 @@ interface RevokeEntry {
   verified_onchain?: boolean;
 }
 
-const formatDetails = (details: string | Record<string, any> | undefined): string => {
+const formatDetails = (details: string | Record<string, any> | undefined, eventType?: string): string => {
   if (!details) return '';
   if (typeof details === 'string') {
     try {
       const parsed = JSON.parse(details);
-      return formatDetails(parsed);
+      return formatDetails(parsed, eventType);
     } catch {
       return details;
     }
@@ -92,7 +92,16 @@ const formatDetails = (details: string | Record<string, any> | undefined): strin
   if (details.filename) parts.push(`File: ${details.filename}`);
   if (details.accessor_name) parts.push(`By: ${details.accessor_name}`);
   if (details.status) parts.push(`Status: ${details.status}`);
-  if (details.grantee_id) parts.push(`To user #${details.grantee_id}`);
+  // Show grantee name if available, otherwise fall back to ID
+  if (details.grantee_name) {
+    parts.push(`Granted to: ${details.grantee_name}`);
+  } else if (details.grantee_id) {
+    parts.push(`To user #${details.grantee_id}`);
+  }
+  // For hospital uploads, show it was auto-granted
+  if (details.auto_grant && details.grant_reason === 'hospital_upload') {
+    parts.push('(auto-granted on upload)');
+  }
   
   return parts.length > 0 ? parts.join(' • ') : '';
 };
@@ -279,11 +288,16 @@ export default function AuditPage() {
                 <p className="text-gray-900 font-medium">
                   {entry.actor_name && <span className="text-indigo-600">{entry.actor_name}</span>}
                   {entry.actor_role && <span className="text-gray-500 text-sm"> ({entry.actor_role})</span>}
+                  {/* Show target name for grant/revoke events */}
+                  {(entry.event_type === 'grant' || entry.event_type === 'revoke') && entry.target_name && (
+                    <span> → <span className="text-purple-600">{entry.target_name}</span>
+                    {entry.target_role && <span className="text-gray-500 text-sm"> ({entry.target_role})</span>}</span>
+                  )}
                   {entry.filename && <span> • {entry.filename}</span>}
                 </p>
                 
-                {formatDetails(entry.details) && (
-                  <p className="text-sm text-gray-500 mt-1">{formatDetails(entry.details)}</p>
+                {formatDetails(entry.details, entry.event_type) && (
+                  <p className="text-sm text-gray-500 mt-1">{formatDetails(entry.details, entry.event_type)}</p>
                 )}
                 
                 {renderBlockchainBadge(entry.tx_hash, entry.block_number)}

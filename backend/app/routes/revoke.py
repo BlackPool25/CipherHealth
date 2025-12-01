@@ -64,6 +64,7 @@ router = APIRouter()
 class RevokeRequest(BaseModel):
     """Request to revoke access to a file by CID."""
     cid: str  # IPFS Content Identifier of the file to revoke
+    password: str  # User's password for verification (security measure)
 
 
 class RevokeResponse(BaseModel):
@@ -357,6 +358,17 @@ async def revoke_access(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the file owner can revoke access",
+        )
+    
+    # Verify password for security
+    from app.routes.auth import verify_password
+    from app.db import get_user_by_id
+    
+    user = await get_user_by_id(current_user["id"])
+    if not user or not verify_password(request.password, user.get("password_hash", "")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password. Please verify your password to revoke access.",
         )
     
     # Get all grants for this file
@@ -661,4 +673,128 @@ async def server_assisted_revoke(
             "Use client-side rotation for complete forward secrecy."
         ),
         message="Grants revoked. Use client-side rotation to complete CEK rotation.",
+    )
+
+
+# ============================================================================
+# Hospital Release Access (Hospital voluntarily gives up access)
+# ============================================================================
+
+
+class HospitalReleaseAccessRequest(BaseModel):
+    """Request for hospital to voluntarily release their access to a file."""
+    cid: str  # CID of the file to release access to
+    reason: Optional[str] = None  # Optional reason for releasing access
+
+
+class HospitalReleaseAccessResponse(BaseModel):
+    """Response after hospital releases access."""
+    released: bool
+    grant_id: Optional[int] = None
+    release_tx: Optional[str] = None  # On-chain tx hash for AccessRevoked
+    message: str
+
+
+@router.post("/hospital-release", response_model=HospitalReleaseAccessResponse)
+async def hospital_release_access(
+    request: HospitalReleaseAccessRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Hospital voluntarily releases (gives up) their access to a file.
+    
+    Unlike patient-initiated revocation, this allows a hospital to proactively
+    release access when they no longer need it (e.g., consultation complete).
+    
+    This endpoint:
+    1. Verifies the hospital has an active grant for this file
+    2. Revokes the grant in the database
+    3. Emits AccessRevoked event on-chain
+    4. Creates audit log entry showing hospital released access
+    
+    Args:
+        request: Release request with CID and optional reason
+        current_user: Authenticated hospital user
+        
+    Returns:
+        Release confirmation with transaction hash
+        
+    Example curl:
+        curl -X POST http://localhost:8000/revoke/hospital-release \\
+          -H "Authorization: Bearer <hospital_jwt_token>" \\
+          -H "Content-Type: application/json" \\
+          -d '{"cid": "bafy...", "reason": "Consultation complete"}'
+    """
+    # Verify caller is a hospital
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can use this endpoint. Patients should use /revoke instead.",
+        )
+    
+    hospital_id = current_user["id"]
+    
+    # Get the file record
+    file_record = await get_file_by_cid(request.cid)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+    
+    file_id = file_record["id"]
+    patient_id = file_record.get("owner_id")
+    
+    # Find the hospital's active grant for this file
+    from app.db import get_grant_by_file_and_grantee
+    grant = await get_grant_by_file_and_grantee(file_id, hospital_id)
+    
+    if not grant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active grant found for this file. You may have already released access.",
+        )
+    
+    # Revoke the grant
+    success = await revoke_grant(grant["id"], None)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke grant",
+        )
+    
+    # Emit on-chain AccessRevoked event
+    release_tx = None
+    try:
+        release_tx = await emit_access_revoked_onchain(request.cid)
+    except ChainConfigError:
+        pass  # Chain not configured
+    except ChainError as e:
+        print(f"Warning: On-chain release event failed: {e}")
+    
+    # Create audit log entry for hospital releasing access
+    try:
+        await create_audit_log(
+            event_type="hospital_release",
+            actor_id=hospital_id,
+            target_id=patient_id,
+            patient_id=patient_id,
+            file_id=file_id,
+            cid=request.cid,
+            details=json.dumps({
+                "filename": file_record.get("filename"),
+                "reason": request.reason or "No reason provided",
+                "grant_id": grant["id"],
+                "action": "Hospital voluntarily released access",
+            }),
+            tx_hash=release_tx,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create release audit log: {e}")
+    
+    return HospitalReleaseAccessResponse(
+        released=True,
+        grant_id=grant["id"],
+        release_tx=release_tx,
+        message=f"Access released successfully. {'Reason: ' + request.reason if request.reason else 'No reason provided.'}",
     )

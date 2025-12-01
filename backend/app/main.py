@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
 from app.routes import auth, grants, upload, audit, access, revoke, patients
+from app.indexer import webhook_router
 
 # Load environment variables from .env file
 # Check multiple locations: current dir, parent dir, workspace root
@@ -75,6 +76,7 @@ app.include_router(revoke.router, prefix="/revoke", tags=["Revocation"])
 app.include_router(audit.router, prefix="/audit", tags=["Audit"])
 app.include_router(access.router, prefix="/access", tags=["Access Management"])
 app.include_router(patients.router, prefix="/patients", tags=["Patient Management"])
+app.include_router(webhook_router, tags=["Webhooks"])
 
 
 @app.get("/")
