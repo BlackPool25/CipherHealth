@@ -23,6 +23,7 @@ interface FileRecord {
   tx_hash?: string;
   created_at: string;
   category?: string;
+  description?: string;  // Description/notes from hospital
 }
 
 interface PatientWithFiles extends HospitalPatient {
@@ -147,6 +148,22 @@ function FileDetailsPopup({ file, onClose, onReleaseAccess }: FileDetailsPopupPr
             <label className="text-sm font-medium text-gray-500">Uploaded</label>
             <p className="text-gray-900">{new Date(file.created_at).toLocaleString()}</p>
           </div>
+          
+          {/* Category */}
+          {file.category && (
+            <div>
+              <label className="text-sm font-medium text-gray-500">Category</label>
+              <p className="text-gray-900">{file.category}</p>
+            </div>
+          )}
+          
+          {/* Description */}
+          {file.description && (
+            <div>
+              <label className="text-sm font-medium text-gray-500">Description / Notes</label>
+              <p className="text-gray-900 bg-gray-50 p-2 rounded-lg mt-1">{file.description}</p>
+            </div>
+          )}
         </div>
         
         {/* Action Buttons */}
@@ -309,7 +326,7 @@ export default function PatientFilesPage() {
     if (!patientSearchQuery.trim()) return patients;
     const query = patientSearchQuery.toLowerCase();
     return patients.filter(p => 
-      p.patient_username.toLowerCase().includes(query) ||
+      (p.patient_name?.toLowerCase().includes(query)) ||
       p.patient_uuid.toLowerCase().includes(query)
     );
   }, [patients, patientSearchQuery]);
@@ -429,11 +446,14 @@ export default function PatientFilesPage() {
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
-                          {patient.patient_username.charAt(0).toUpperCase()}
+                          {(patient.patient_name || 'P').charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-gray-900 truncate">
-                            {patient.patient_username}
+                            {patient.patient_name || 'Patient (Profile incomplete)'}
+                          </p>
+                          <p className="text-xs text-gray-400 font-mono truncate">
+                            {patient.patient_uuid}
                           </p>
                           <p className="text-xs text-gray-500">
                             {patient.file_count} files
@@ -468,12 +488,23 @@ export default function PatientFilesPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold">
-                        {selectedPatient.patient_username.charAt(0).toUpperCase()}
+                        {(selectedPatient.patient_name || 'P').charAt(0).toUpperCase()}
                       </div>
                       <div>
                         <h2 className="text-xl font-bold text-gray-900">
-                          {selectedPatient.patient_username}
+                          {selectedPatient.patient_name || 'Patient (Profile incomplete)'}
                         </h2>
+                        {/* Profile info */}
+                        {selectedPatient.profile_completed && (
+                          <p className="text-sm text-gray-600">
+                            {selectedPatient.age && <span>{selectedPatient.age} yrs</span>}
+                            {selectedPatient.gender && <span className="capitalize"> • {selectedPatient.gender}</span>}
+                            {selectedPatient.blood_group && <span> • {selectedPatient.blood_group}</span>}
+                          </p>
+                        )}
+                        <p className="text-xs text-gray-400 font-mono">
+                          UUID: {selectedPatient.patient_uuid}
+                        </p>
                         <p className="text-sm text-gray-500">
                           Access expires: {selectedPatient.expires_at 
                             ? formatDate(selectedPatient.expires_at) 

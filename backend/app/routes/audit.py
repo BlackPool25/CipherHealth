@@ -439,9 +439,59 @@ async def get_my_audit_logs(
     Example curl:
         curl -H "Authorization: Bearer <token>" http://localhost:8000/audit/my-logs
     """
-    # If hospital, redirect to hospital audit endpoint
+    # If hospital, return their logs in CategorizedAuditResponse format
     if current_user.get("role") == "hospital":
-        return await get_hospital_audit_logs(current_user)
+        hospital_id = current_user["id"]
+        
+        # Get all audit logs where hospital was the actor
+        all_logs_raw = await get_audit_logs_for_hospital(hospital_id)
+        access_events_raw = await get_hospital_access_events(hospital_id)
+        upload_events_raw = await get_hospital_upload_events(hospital_id)
+        
+        # Format logs
+        all_logs = []
+        for log in all_logs_raw:
+            all_logs.append({
+                "id": log.get("id"),
+                "event_type": log.get("event_type"),
+                "patient_id": log.get("patient_id"),
+                "patient_name": log.get("patient_name"),
+                "file_id": log.get("file_id"),
+                "filename": log.get("filename"),
+                "cid": log.get("cid"),
+                "details": log.get("details"),
+                "tx_hash": log.get("tx_hash"),
+                "block_number": log.get("block_number"),
+                "timestamp": format_timestamp(log.get("created_at")),
+            })
+        
+        access_events = []
+        for log in access_events_raw:
+            access_events.append({
+                "id": log.get("id"),
+                "patient_id": log.get("patient_id"),
+                "patient_name": log.get("patient_name"),
+                "file_id": log.get("file_id"),
+                "filename": log.get("filename"),
+                "cid": log.get("cid"),
+                "details": log.get("details"),
+                "tx_hash": log.get("tx_hash"),
+                "timestamp": format_timestamp(log.get("created_at")),
+            })
+        
+        # Hospitals don't have grants/revokes (those are patient actions)
+        # Upload events can be included in all_logs
+        return CategorizedAuditResponse(
+            all_logs=all_logs,
+            grants=[],
+            access_events=access_events,
+            revokes=[],
+            total_count=len(all_logs),
+            grants_count=0,
+            access_count=len(access_events),
+            revokes_count=0,
+            source="database",
+        )
     
     return await _get_categorized_audit_logs_for_user(current_user["id"], current_user)
 

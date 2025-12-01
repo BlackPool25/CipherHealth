@@ -5,7 +5,7 @@
  * Patients are redirected to dashboard (they can't upload).
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -38,6 +38,9 @@ export default function UploadPage() {
   const [patients, setPatients] = useState<HospitalPatient[]>([]);
   const [selectedPatientUuid, setSelectedPatientUuid] = useState<string | null>(null);
   const [isLoadingPatients, setIsLoadingPatients] = useState(false);
+  const [patientSearchQuery, setPatientSearchQuery] = useState<string>('');
+  const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
+  const patientDropdownRef = useRef<HTMLDivElement>(null);
   
   // Folder/Category selection
   const [selectedCategory, setSelectedCategory] = useState<string>('General');
@@ -45,6 +48,9 @@ export default function UploadPage() {
   
   // Custom display name (optional rename)
   const [displayName, setDisplayName] = useState<string>('');
+  
+  // Description field
+  const [description, setDescription] = useState<string>('');
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/auth');
@@ -79,6 +85,35 @@ export default function UploadPage() {
     }
     setIsLoadingPatients(false);
   };
+
+  // Filter patients by search query (name or UUID)
+  const filteredPatients = useMemo(() => {
+    if (!patientSearchQuery.trim()) return patients;
+    const query = patientSearchQuery.toLowerCase();
+    return patients.filter(p => 
+      (p.patient_name?.toLowerCase().includes(query)) ||
+      p.patient_uuid.toLowerCase().includes(query)
+    );
+  }, [patients, patientSearchQuery]);
+
+  // Get selected patient object
+  const selectedPatient = useMemo(() => {
+    return patients.find(p => p.patient_uuid === selectedPatientUuid) || null;
+  }, [patients, selectedPatientUuid]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (patientDropdownRef.current && !patientDropdownRef.current.contains(event.target as Node)) {
+        setIsPatientDropdownOpen(false);
+      }
+    };
+    
+    if (isPatientDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isPatientDropdownOpen]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -135,15 +170,13 @@ export default function UploadPage() {
       await new Promise(r => setTimeout(r, 500));
 
       setUploadProgress({ stage: 'uploading', progress: 50, message: 'Uploading to decentralized storage...' });
-
-      // Get selected patient's info
-      const selectedPatient = patients.find(p => p.patient_uuid === selectedPatientUuid);
       
       // Upload for the selected patient using hospital upload endpoint
       const response = await hospitalUploadFile(
         selectedFile, 
         selectedPatientUuid, 
         selectedCategory,
+        description || undefined, // description
         undefined, // folder
         displayName || undefined // custom display name
       );
@@ -174,6 +207,7 @@ export default function UploadPage() {
   const resetUpload = () => {
     setSelectedFile(null);
     setDisplayName('');
+    setDescription('');
     setUploadProgress({ stage: 'idle', progress: 0, message: 'Ready to upload' });
     setResult(null);
   };
@@ -242,18 +276,157 @@ export default function UploadPage() {
                     </button>
                   </div>
                 ) : (
-                  <select
-                    value={selectedPatientUuid || ''}
-                    onChange={(e) => setSelectedPatientUuid(e.target.value || null)}
-                    className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-white text-gray-900"
-                  >
-                    <option value="">-- Select a patient --</option>
-                    {patients.map((patient) => (
-                      <option key={patient.patient_uuid} value={patient.patient_uuid}>
-                        {patient.patient_username} (UUID: {patient.patient_uuid.slice(0, 8)}...)
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative" ref={patientDropdownRef}>
+                    {/* Dropdown trigger button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsPatientDropdownOpen(!isPatientDropdownOpen)}
+                      className={`w-full px-4 py-3 text-left bg-white border-2 rounded-xl transition-all ${
+                        isPatientDropdownOpen 
+                          ? 'border-indigo-500 ring-2 ring-indigo-200' 
+                          : selectedPatient 
+                            ? 'border-indigo-300 hover:border-indigo-400' 
+                            : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {selectedPatient ? (
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                            {(selectedPatient.patient_name || 'P').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-gray-900 truncate">
+                              {selectedPatient.patient_name || 'Patient (Profile incomplete)'}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {selectedPatient.age && <span>{selectedPatient.age} yrs</span>}
+                              {selectedPatient.gender && <span className="capitalize"> • {selectedPatient.gender}</span>}
+                              {' • '}
+                              <span className="font-mono">{selectedPatient.patient_uuid.slice(0, 8)}...</span>
+                            </p>
+                          </div>
+                          <svg className={`w-5 h-5 text-gray-400 transition-transform ${isPatientDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Select a patient...</span>
+                          <svg className={`w-5 h-5 text-gray-400 transition-transform ${isPatientDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                    
+                    {/* Dropdown menu */}
+                    {isPatientDropdownOpen && (
+                      <div className="absolute z-20 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                        {/* Search box inside dropdown */}
+                        <div className="p-2 border-b border-gray-100">
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+                            <input
+                              type="text"
+                              placeholder="Search by name or UUID..."
+                              value={patientSearchQuery}
+                              onChange={(e) => setPatientSearchQuery(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+                        
+                        {/* Patient list */}
+                        <div className="max-h-60 overflow-y-auto">
+                          {filteredPatients.length === 0 ? (
+                            <div className="p-4 text-center text-gray-500 text-sm">
+                              No patients match "{patientSearchQuery}"
+                            </div>
+                          ) : (
+                            filteredPatients.map((patient) => (
+                              <button
+                                key={patient.patient_uuid}
+                                onClick={() => {
+                                  setSelectedPatientUuid(patient.patient_uuid);
+                                  setIsPatientDropdownOpen(false);
+                                  setPatientSearchQuery('');
+                                }}
+                                className={`w-full text-left p-3 hover:bg-indigo-50 transition-colors ${
+                                  selectedPatientUuid === patient.patient_uuid ? 'bg-indigo-100' : ''
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                                    {(patient.patient_name || 'P').charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-gray-900 truncate">
+                                      {patient.patient_name || 'Patient (Profile incomplete)'}
+                                    </p>
+                                    {patient.profile_completed && (
+                                      <p className="text-xs text-gray-500">
+                                        {patient.age && <span>{patient.age} yrs</span>}
+                                        {patient.gender && <span className="capitalize"> • {patient.gender}</span>}
+                                        {patient.blood_group && <span> • {patient.blood_group}</span>}
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-gray-400 font-mono">
+                                      {patient.patient_uuid}
+                                    </p>
+                                  </div>
+                                  {selectedPatientUuid === patient.patient_uuid && (
+                                    <span className="text-indigo-600 flex-shrink-0">✓</span>
+                                  )}
+                                </div>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                        
+                        {/* Patient count footer */}
+                        <div className="px-3 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-500">
+                          {filteredPatients.length} of {patients.length} patients
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Selected patient details card (shown below dropdown when selected) */}
+                {selectedPatient && !isPatientDropdownOpen && (
+                  <div className="mt-3 p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
+                    <h4 className="font-medium text-indigo-900 flex items-center gap-2 mb-2">
+                      <span>✓</span> Uploading for
+                    </h4>
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
+                        {(selectedPatient.patient_name || 'P').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-900">
+                          {selectedPatient.patient_name || 'Patient (Profile incomplete)'}
+                        </p>
+                        {selectedPatient.profile_completed && (
+                          <p className="text-sm text-gray-600">
+                            {selectedPatient.age && <span>{selectedPatient.age} years old</span>}
+                            {selectedPatient.gender && <span className="capitalize"> • {selectedPatient.gender}</span>}
+                            {selectedPatient.blood_group && <span> • Blood type: {selectedPatient.blood_group}</span>}
+                          </p>
+                        )}
+                        <p className="text-xs text-indigo-600 font-mono mt-1 break-all">
+                          UUID: {selectedPatient.patient_uuid}
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => setIsPatientDropdownOpen(true)}
+                        className="text-indigo-600 hover:text-indigo-700 text-sm font-medium"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -273,6 +446,20 @@ export default function UploadPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              
+              {/* Description Field */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Description / Notes <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Add notes about this record (e.g., 'Blood test results from routine checkup')"
+                  rows={2}
+                  className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-white text-gray-900 resize-none"
+                />
               </div>
 
               {/* Drop Zone */}

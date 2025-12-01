@@ -104,7 +104,7 @@ export default function MyPatientsPage() {
     }
 
     if (result.data) {
-      setSuccess(`Access request sent to ${result.data.patient_username}. Waiting for approval.`);
+      setSuccess(`Access request sent successfully. Request ID: ${result.data.request_id}. Waiting for patient approval.`);
       setShowRequestModal(false);
       setPatientUuid('');
       setRequestPurpose('');
@@ -278,12 +278,31 @@ export default function MyPatientsPage() {
                           <span className="text-xl">👤</span>
                         </div>
                         <div>
-                          <h3 className="font-semibold text-gray-900">{patient.patient_username}</h3>
+                          <h3 className="font-semibold text-gray-900">
+                            {patient.patient_name || 'Patient (Profile incomplete)'}
+                          </h3>
+                          {/* Patient profile info */}
+                          {patient.profile_completed && (
+                            <div className="flex items-center gap-2 text-sm text-gray-500 mt-0.5">
+                              {patient.age && <span>{patient.age} yrs</span>}
+                              {patient.gender && <span className="capitalize">• {patient.gender}</span>}
+                              {patient.blood_group && <span>• {patient.blood_group}</span>}
+                            </div>
+                          )}
+                          {/* Patient UUID */}
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">
+                            UUID: {patient.patient_uuid}
+                          </p>
                           <div className="flex items-center gap-2 mt-1">
                             {getStatusBadge(patient.status)}
                             {patient.tx_hash && (
                               <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
                                 ⛓ On-chain
+                              </span>
+                            )}
+                            {!patient.profile_completed && (
+                              <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+                                Profile incomplete
                               </span>
                             )}
                           </div>
@@ -356,12 +375,31 @@ export default function MyPatientsPage() {
                           <span className="text-xl">👤</span>
                         </div>
                         <div>
-                          <h3 className="font-semibold text-gray-900">{request.patient_username}</h3>
+                          <h3 className="font-semibold text-gray-900">
+                            {request.patient_name || 'Patient (Profile incomplete)'}
+                          </h3>
+                          {/* Patient profile info */}
+                          {request.profile_completed && (
+                            <div className="flex items-center gap-2 text-sm text-gray-500 mt-0.5">
+                              {request.age && <span>{request.age} yrs</span>}
+                              {request.gender && <span className="capitalize">• {request.gender}</span>}
+                              {request.blood_group && <span>• {request.blood_group}</span>}
+                            </div>
+                          )}
+                          {/* Patient UUID */}
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">
+                            UUID: {request.patient_uuid}
+                          </p>
                           <p className="text-sm text-gray-600 mt-1">
                             <strong>Purpose:</strong> {request.purpose}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
                             {getStatusBadge(request.status)}
+                            {!request.profile_completed && (
+                              <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+                                Profile incomplete
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

@@ -24,6 +24,7 @@ interface FileRecord {
   tx_hash?: string;
   created_at: string;
   category?: string;  // Category from database
+  description?: string;  // Description/notes from hospital
 }
 
 type ViewMode = 'grid' | 'list';
@@ -153,6 +154,22 @@ function FileDetailsPopup({ file, onClose, onRename, onShare, onRevoke }: FileDe
             <label className="text-sm font-medium text-gray-500">Uploaded</label>
             <p className="text-gray-900">{new Date(file.created_at).toLocaleString()}</p>
           </div>
+          
+          {/* Category */}
+          {file.category && (
+            <div>
+              <label className="text-sm font-medium text-gray-500">Category</label>
+              <p className="text-gray-900">{file.category}</p>
+            </div>
+          )}
+          
+          {/* Description */}
+          {file.description && (
+            <div>
+              <label className="text-sm font-medium text-gray-500">Description / Notes</label>
+              <p className="text-gray-900 bg-gray-50 p-2 rounded-lg mt-1">{file.description}</p>
+            </div>
+          )}
         </div>
         
         {/* Action Buttons */}

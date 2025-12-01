@@ -71,6 +71,7 @@ class FileRecord(BaseModel):
     encrypted_cek: Optional[str] = None  # CEK encrypted with owner's public key
     capsule: Optional[str] = None  # Umbral capsule for re-encryption (hex)
     category: Optional[str] = None  # File category (e.g., Lab Results, Imaging)
+    description: Optional[str] = None  # Description/notes about the file
     uploaded_by_hospital_id: Optional[int] = None  # Hospital that uploaded for patient
     tx_hash: Optional[str] = None  # On-chain transaction hash
     created_at: Optional[str] = None
@@ -154,6 +155,87 @@ class HospitalInviteToken(BaseModel):
 
 
 # ============================================================================
+# User Profile Models
+# ============================================================================
+
+
+class PatientProfileCreate(BaseModel):
+    """Schema for creating/updating patient profile."""
+    
+    full_name: str
+    date_of_birth: str  # ISO format: YYYY-MM-DD
+    gender: str  # male, female, other
+    aadhar: Optional[str] = None  # Will be encrypted before storage
+    blood_group: Optional[str] = None
+    phone: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    address: Optional[str] = None
+
+
+class HospitalProfileCreate(BaseModel):
+    """Schema for creating/updating hospital profile."""
+    
+    hospital_name: str
+    branch_name: str
+    location: str
+    registration_id: Optional[str] = None  # Will be encrypted before storage
+    phone: Optional[str] = None
+    specializations: Optional[str] = None  # Comma-separated
+    accreditation: Optional[str] = None  # e.g., NABH, JCI
+
+
+class UserProfileResponse(BaseModel):
+    """Schema for profile response (public/shareable fields only)."""
+    
+    user_id: int
+    role: str
+    full_name: Optional[str] = None
+    profile_completed: bool = False
+    
+    # Patient fields (shareable)
+    gender: Optional[str] = None
+    blood_group: Optional[str] = None
+    # Age calculated from DOB, not the DOB itself
+    age: Optional[int] = None
+    
+    # Hospital fields (shareable)
+    hospital_name: Optional[str] = None
+    branch_name: Optional[str] = None
+    location: Optional[str] = None
+    specializations: Optional[str] = None
+    accreditation: Optional[str] = None
+
+
+class UserProfilePrivateResponse(BaseModel):
+    """Schema for full profile response (owner-only, includes sensitive data)."""
+    
+    user_id: int
+    role: str
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    profile_completed: bool = False
+    
+    # Patient fields
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    aadhar_masked: Optional[str] = None  # Masked: XXXX-XXXX-1234
+    blood_group: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    address: Optional[str] = None
+    
+    # Hospital fields
+    hospital_name: Optional[str] = None
+    branch_name: Optional[str] = None
+    location: Optional[str] = None
+    registration_id_masked: Optional[str] = None  # Masked: ******1234
+    specializations: Optional[str] = None
+    accreditation: Optional[str] = None
+    
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+# ============================================================================
 # Database Initialization
 # ============================================================================
 
@@ -204,14 +286,15 @@ async def init_db():
                 capsule TEXT,
                 uploaded_by_hospital_id INTEGER,
                 category TEXT,
+                description TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_id) REFERENCES users(id),
                 FOREIGN KEY (uploaded_by_hospital_id) REFERENCES users(id)
             )
         """)
         
-        # Migration: Add uploaded_by_hospital_id and category columns if they don't exist
-        for column, col_type in [("uploaded_by_hospital_id", "INTEGER"), ("category", "TEXT")]:
+        # Migration: Add uploaded_by_hospital_id, category, and description columns if they don't exist
+        for column, col_type in [("uploaded_by_hospital_id", "INTEGER"), ("category", "TEXT"), ("description", "TEXT")]:
             try:
                 await db.execute(f"ALTER TABLE files ADD COLUMN {column} {col_type}")
             except Exception:
@@ -340,6 +423,42 @@ async def init_db():
                 await db.execute(f"ALTER TABLE audit_logs ADD COLUMN {column} TEXT")
             except Exception:
                 pass  # Column already exists
+
+        # User profiles table - stores extended profile info for patients and hospitals
+        # Sensitive fields (aadhar, registration_id) are encrypted at application level
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE NOT NULL,
+                
+                -- Common fields
+                full_name TEXT,
+                phone TEXT,
+                
+                -- Patient-specific fields
+                date_of_birth TEXT,
+                gender TEXT,
+                aadhar_encrypted TEXT,
+                blood_group TEXT,
+                emergency_contact TEXT,
+                address TEXT,
+                
+                -- Hospital-specific fields
+                hospital_name TEXT,
+                branch_name TEXT,
+                location TEXT,
+                registration_id_encrypted TEXT,
+                specializations TEXT,
+                accreditation TEXT,
+                
+                -- Metadata
+                profile_completed INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
 
         await db.commit()
         print("Database initialized successfully.")
@@ -627,10 +746,10 @@ async def create_file_record(file: FileRecord) -> int:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO files (cid, owner_id, filename, encrypted_cek, capsule, category, uploaded_by_hospital_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO files (cid, owner_id, filename, encrypted_cek, capsule, category, description, uploaded_by_hospital_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (file.cid, file.owner_id, file.filename, file.encrypted_cek, file.capsule, file.category, file.uploaded_by_hospital_id),
+            (file.cid, file.owner_id, file.filename, file.encrypted_cek, file.capsule, file.category, file.description, file.uploaded_by_hospital_id),
         )
         await db.commit()
         return cursor.lastrowid
@@ -1471,3 +1590,229 @@ async def get_hospital_upload_events(hospital_id: int) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+# ============================================================================
+# Database Operations - User Profiles
+# ============================================================================
+
+
+async def create_or_update_patient_profile(
+    user_id: int,
+    full_name: str,
+    date_of_birth: str,
+    gender: str,
+    aadhar_encrypted: Optional[str] = None,
+    blood_group: Optional[str] = None,
+    phone: Optional[str] = None,
+    emergency_contact: Optional[str] = None,
+    address: Optional[str] = None,
+) -> bool:
+    """
+    Create or update a patient's profile.
+    
+    Args:
+        user_id: The user's ID
+        full_name: Patient's full name
+        date_of_birth: Date of birth (YYYY-MM-DD)
+        gender: Gender (male/female/other)
+        aadhar_encrypted: Encrypted Aadhar number
+        blood_group: Blood group
+        phone: Phone number
+        emergency_contact: Emergency contact info
+        address: Address
+        
+    Returns:
+        True if successful
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Check if profile exists
+        cursor = await db.execute(
+            "SELECT id FROM user_profiles WHERE user_id = ?",
+            (user_id,)
+        )
+        existing = await cursor.fetchone()
+        
+        if existing:
+            # Update existing profile
+            await db.execute(
+                """
+                UPDATE user_profiles SET
+                    full_name = ?,
+                    date_of_birth = ?,
+                    gender = ?,
+                    aadhar_encrypted = ?,
+                    blood_group = ?,
+                    phone = ?,
+                    emergency_contact = ?,
+                    address = ?,
+                    profile_completed = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (full_name, date_of_birth, gender, aadhar_encrypted,
+                 blood_group, phone, emergency_contact, address, user_id)
+            )
+        else:
+            # Create new profile
+            await db.execute(
+                """
+                INSERT INTO user_profiles (
+                    user_id, full_name, date_of_birth, gender,
+                    aadhar_encrypted, blood_group, phone,
+                    emergency_contact, address, profile_completed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (user_id, full_name, date_of_birth, gender,
+                 aadhar_encrypted, blood_group, phone,
+                 emergency_contact, address)
+            )
+        
+        # Update needs_profile_upload flag
+        await db.execute(
+            "UPDATE users SET needs_profile_upload = 0 WHERE id = ?",
+            (user_id,)
+        )
+        
+        await db.commit()
+        return True
+
+
+async def create_or_update_hospital_profile(
+    user_id: int,
+    hospital_name: str,
+    branch_name: str,
+    location: str,
+    registration_id_encrypted: Optional[str] = None,
+    phone: Optional[str] = None,
+    specializations: Optional[str] = None,
+    accreditation: Optional[str] = None,
+) -> bool:
+    """
+    Create or update a hospital's profile.
+    
+    Args:
+        user_id: The user's ID
+        hospital_name: Hospital name
+        branch_name: Branch name
+        location: Location/city
+        registration_id_encrypted: Encrypted registration ID
+        phone: Contact phone
+        specializations: Comma-separated specializations
+        accreditation: Accreditation (NABH, JCI, etc.)
+        
+    Returns:
+        True if successful
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Check if profile exists
+        cursor = await db.execute(
+            "SELECT id FROM user_profiles WHERE user_id = ?",
+            (user_id,)
+        )
+        existing = await cursor.fetchone()
+        
+        if existing:
+            # Update existing profile
+            await db.execute(
+                """
+                UPDATE user_profiles SET
+                    hospital_name = ?,
+                    branch_name = ?,
+                    location = ?,
+                    registration_id_encrypted = ?,
+                    phone = ?,
+                    specializations = ?,
+                    accreditation = ?,
+                    full_name = ?,
+                    profile_completed = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (hospital_name, branch_name, location, registration_id_encrypted,
+                 phone, specializations, accreditation, hospital_name, user_id)
+            )
+        else:
+            # Create new profile
+            await db.execute(
+                """
+                INSERT INTO user_profiles (
+                    user_id, hospital_name, branch_name, location,
+                    registration_id_encrypted, phone, specializations,
+                    accreditation, full_name, profile_completed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (user_id, hospital_name, branch_name, location,
+                 registration_id_encrypted, phone, specializations,
+                 accreditation, hospital_name)
+            )
+        
+        await db.commit()
+        return True
+
+
+async def get_user_profile(user_id: int) -> Optional[dict]:
+    """
+    Get a user's full profile (for the owner).
+    
+    Returns all profile fields including encrypted sensitive data.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT up.*, u.role, u.username, u.email, u.uuid
+            FROM user_profiles up
+            JOIN users u ON up.user_id = u.id
+            WHERE up.user_id = ?
+            """,
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_user_profile_public(user_id: int) -> Optional[dict]:
+    """
+    Get a user's public profile (for other users to see).
+    
+    Returns only shareable fields, never sensitive data.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT 
+                up.user_id,
+                u.role,
+                up.full_name,
+                up.profile_completed,
+                -- Patient shareable fields
+                up.gender,
+                up.blood_group,
+                up.date_of_birth,
+                -- Hospital shareable fields
+                up.hospital_name,
+                up.branch_name,
+                up.location,
+                up.specializations,
+                up.accreditation
+            FROM user_profiles up
+            JOIN users u ON up.user_id = u.id
+            WHERE up.user_id = ?
+            """,
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def check_profile_completed(user_id: int) -> bool:
+    """Check if a user has completed their profile."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT profile_completed FROM user_profiles WHERE user_id = ?",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0]) if row else False

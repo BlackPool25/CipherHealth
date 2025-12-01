@@ -1172,7 +1172,6 @@ class HospitalAccessRequestResponse(BaseModel):
     request_id: int
     patient_id: int
     patient_uuid: str
-    patient_username: str
     status: str
     message: str
 
@@ -1273,7 +1272,7 @@ async def get_pending_access_requests_for_patient(patient_id: int) -> list[dict]
 
 
 async def get_access_requests_by_hospital(hospital_id: int) -> list[dict]:
-    """Get all access requests made by a hospital."""
+    """Get all access requests made by a hospital with patient profile info (safe fields only)."""
     await ensure_hospital_access_requests_table()
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -1289,17 +1288,47 @@ async def get_access_requests_by_hospital(hospital_id: int) -> list[dict]:
                 har.created_at,
                 har.processed_at,
                 har.tx_hash,
-                u.username as patient_username,
-                u.uuid as patient_uuid
+                u.uuid as patient_uuid,
+                -- Patient profile info (safe/shareable fields only - NO username)
+                up.full_name as patient_name,
+                up.date_of_birth,
+                up.gender,
+                up.blood_group,
+                up.profile_completed
             FROM hospital_access_requests har
             JOIN users u ON har.patient_id = u.id
+            LEFT JOIN user_profiles up ON har.patient_id = up.user_id
             WHERE har.hospital_id = ?
             ORDER BY har.created_at DESC
             """,
             (hospital_id,),
         )
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        
+        # Process results to calculate age
+        from datetime import date
+        results = []
+        for row in rows:
+            item = dict(row)
+            
+            # Calculate age from date_of_birth
+            if item.get("date_of_birth"):
+                try:
+                    dob = date.fromisoformat(item["date_of_birth"])
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    item["age"] = age
+                except (ValueError, TypeError):
+                    item["age"] = None
+            else:
+                item["age"] = None
+            
+            # Remove raw DOB from response (privacy)
+            item.pop("date_of_birth", None)
+            
+            results.append(item)
+        
+        return results
 
 
 async def update_access_request_status(
@@ -1411,9 +1440,8 @@ async def hospital_request_patient_access(
         request_id=request_id,
         patient_id=patient["id"],
         patient_uuid=patient.get("uuid", ""),
-        patient_username=patient["username"],
         status="pending",
-        message=f"Access request sent to patient {patient['username']}",
+        message=f"Access request sent. Request ID: {request_id}",
     )
 
 
@@ -1834,7 +1862,7 @@ async def get_hospital_patients(
         current_user: Authenticated hospital user
         
     Returns:
-        List of patients with access status
+        List of patients with access status and public profile info
     """
     # Verify caller is a hospital
     if current_user.get("role") != "hospital":
@@ -1858,18 +1886,46 @@ async def get_hospital_patients(
                 ha.granted_at,
                 ha.expires_at,
                 ha.tx_hash,
-                u.username as patient_username,
                 u.uuid as patient_uuid,
-                (SELECT COUNT(*) FROM files f WHERE f.owner_id = ha.patient_id) as file_count
+                (SELECT COUNT(*) FROM files f WHERE f.owner_id = ha.patient_id) as file_count,
+                -- Patient profile info (safe/shareable fields only - NO username)
+                up.full_name as patient_name,
+                up.date_of_birth,
+                up.gender,
+                up.blood_group,
+                up.profile_completed
             FROM hospital_access ha
             JOIN users u ON ha.patient_id = u.id
+            LEFT JOIN user_profiles up ON ha.patient_id = up.user_id
             WHERE ha.hospital_id = ? AND ha.status = 'active'
             ORDER BY ha.granted_at DESC
             """,
             (hospital_id,),
         )
         rows = await cursor.fetchall()
-        patients = [dict(row) for row in rows]
+        
+        # Process results to add calculated age
+        patients = []
+        for row in rows:
+            patient = dict(row)
+            
+            # Calculate age from date_of_birth
+            if patient.get("date_of_birth"):
+                try:
+                    from datetime import date
+                    dob = date.fromisoformat(patient["date_of_birth"])
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    patient["age"] = age
+                except (ValueError, TypeError):
+                    patient["age"] = None
+            else:
+                patient["age"] = None
+            
+            # Remove raw DOB from response (privacy - only share age)
+            patient.pop("date_of_birth", None)
+            
+            patients.append(patient)
     
     return {
         "patients": patients,
@@ -1968,7 +2024,6 @@ async def get_patient_files_for_hospital(
     return {
         "patient_uuid": patient_uuid,
         "patient_id": patient_id,
-        "patient_username": patient.get("username"),
         "files": files,
         "count": len(files),
     }

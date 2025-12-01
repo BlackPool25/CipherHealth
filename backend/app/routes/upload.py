@@ -108,6 +108,7 @@ class HospitalUploadResponse(BaseModel):
     patient_uuid: str
     hospital_id: int
     category: Optional[str] = None
+    description: Optional[str] = None  # Description/notes about the file
     folder: Optional[str] = None  # Folder organization
     encrypted_cek: str
     capsule: str
@@ -125,6 +126,7 @@ class HospitalUploadCiphertextRequest(BaseModel):
     
     patient_uuid: str  # Changed to UUID
     category: Optional[str] = None
+    description: Optional[str] = None  # Description/notes about the file
     folder: Optional[str] = None  # Folder organization
     ciphertext_cid: str  # CID of ciphertext already uploaded to Storacha
     capsule_meta: str  # Hex-encoded capsule from client-side encryption
@@ -442,6 +444,7 @@ async def hospital_upload(
     file: UploadFile = File(...),
     patient_uuid: str = Form(...),
     category: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     folder: Optional[str] = Form(None),
     display_name: Optional[str] = Form(None),
     current_user: dict = Depends(require_current_user),
@@ -464,6 +467,7 @@ async def hospital_upload(
         file: File to encrypt and upload (multipart)
         patient_uuid: Patient's UUID (share-safe identifier)
         category: Optional category (e.g., "lab_results", "imaging")
+        description: Optional description/notes about the file
         folder: Optional folder path for organization
         display_name: Optional custom display name for the file
         current_user: Authenticated hospital user
@@ -481,6 +485,7 @@ async def hospital_upload(
           -F "file=@lab_results.pdf" \\
           -F "patient_uuid=a1b2c3d4-e5f6-..." \\
           -F "category=lab_results" \\
+          -F "description=Blood test results from Nov 2025" \\
           -F "folder=blood_tests/2024"
     """
     hospital_id = current_user["id"]
@@ -572,6 +577,7 @@ async def hospital_upload(
             encrypted_cek=cek_ciphertext,
             capsule=capsule_hex,
             category=category,  # Include category in file record
+            description=description,  # Include description in file record
             uploaded_by_hospital_id=hospital_id,  # Track which hospital uploaded
         )
         file_id = await create_file_record(file_record)
@@ -668,6 +674,7 @@ async def hospital_upload(
                 details=json.dumps({
                     "filename": display_filename,
                     "category": category,
+                    "description": description,
                     "uploader_role": "hospital",
                     "uploader_name": current_user.get("username"),
                     "is_hospital_upload": True,
@@ -686,6 +693,7 @@ async def hospital_upload(
             patient_uuid=patient_uuid,
             hospital_id=hospital_id,
             category=category,
+            description=description,
             folder=folder,
             encrypted_cek=cek_ciphertext,
             capsule=capsule_hex,

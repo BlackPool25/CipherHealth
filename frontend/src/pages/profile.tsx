@@ -7,7 +7,19 @@ import { useRouter } from 'next/router';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
-import { getCurrentUser, listFiles, listGrants, getAuditLogs, updatePublicKey, verifyPassword } from '@/lib/api';
+import { 
+  getCurrentUser, 
+  listFiles, 
+  listGrants, 
+  getAuditLogs, 
+  updatePublicKey, 
+  verifyPassword,
+  getMyProfile,
+  updatePatientProfile,
+  updateHospitalProfile,
+  PatientProfile,
+  HospitalProfile,
+} from '@/lib/api';
 import KeyManager from '@/lib/KeyManager';
 
 interface UserProfile {
@@ -55,6 +67,32 @@ export default function ProfilePage() {
   const [revealedSigningKey, setRevealedSigningKey] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(false);
 
+  // Extended profile state
+  const [extendedProfile, setExtendedProfile] = useState<PatientProfile | HospitalProfile | null>(null);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editPassword, setEditPassword] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
+  
+  // Patient profile fields
+  const [editFullName, setEditFullName] = useState('');
+  const [editDob, setEditDob] = useState('');
+  const [editGender, setEditGender] = useState('');
+  const [editAadhar, setEditAadhar] = useState('');
+  const [editBloodGroup, setEditBloodGroup] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmergencyContact, setEditEmergencyContact] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  
+  // Hospital profile fields
+  const [editHospitalName, setEditHospitalName] = useState('');
+  const [editBranchName, setEditBranchName] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editRegistrationId, setEditRegistrationId] = useState('');
+  const [editSpecializations, setEditSpecializations] = useState('');
+  const [editAccreditation, setEditAccreditation] = useState('');
+
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/auth');
   }, [authLoading, isAuthenticated, router]);
@@ -100,6 +138,122 @@ export default function ProfilePage() {
     
     fetchProfile();
   }, [user?.id]);
+
+  // Fetch extended profile data
+  useEffect(() => {
+    const fetchExtendedProfile = async () => {
+      if (!user?.id) return;
+      
+      const result = await getMyProfile();
+      if (result.data) {
+        setExtendedProfile(result.data);
+        
+        // Pre-populate edit fields
+        if (result.data.role === 'patient') {
+          const p = result.data as PatientProfile;
+          setEditFullName(p.full_name || '');
+          setEditDob(p.date_of_birth || '');
+          setEditGender(p.gender || '');
+          setEditBloodGroup(p.blood_group || '');
+          setEditPhone(p.phone || '');
+          setEditEmergencyContact(p.emergency_contact || '');
+          setEditAddress(p.address || '');
+        } else {
+          const h = result.data as HospitalProfile;
+          setEditHospitalName(h.hospital_name || '');
+          setEditBranchName(h.branch_name || '');
+          setEditLocation(h.location || '');
+          setEditPhone(h.phone || '');
+          setEditSpecializations(h.specializations || '');
+          setEditAccreditation(h.accreditation || '');
+        }
+      }
+    };
+    
+    fetchExtendedProfile();
+  }, [user?.id]);
+
+  const handleUpdateProfile = async () => {
+    if (!editPassword) {
+      setProfileError('Please enter your password to save changes');
+      return;
+    }
+    
+    setIsUpdatingProfile(true);
+    setProfileError('');
+    setProfileSuccess('');
+    
+    try {
+      const role = userProfile?.role || user?.role;
+      
+      if (role === 'patient') {
+        if (!editFullName || !editDob || !editGender) {
+          setProfileError('Name, Date of Birth, and Gender are required');
+          setIsUpdatingProfile(false);
+          return;
+        }
+        
+        const result = await updatePatientProfile({
+          password: editPassword,
+          full_name: editFullName,
+          date_of_birth: editDob,
+          gender: editGender,
+          aadhar: editAadhar || undefined,
+          blood_group: editBloodGroup || undefined,
+          phone: editPhone || undefined,
+          emergency_contact: editEmergencyContact || undefined,
+          address: editAddress || undefined,
+        });
+        
+        if (result.error) {
+          setProfileError(result.error);
+        } else {
+          setProfileSuccess('Profile updated successfully!');
+          setShowEditProfile(false);
+          setEditPassword('');
+          // Refresh profile
+          const refreshResult = await getMyProfile();
+          if (refreshResult.data) {
+            setExtendedProfile(refreshResult.data);
+          }
+        }
+      } else {
+        if (!editHospitalName || !editBranchName || !editLocation) {
+          setProfileError('Hospital Name, Branch, and Location are required');
+          setIsUpdatingProfile(false);
+          return;
+        }
+        
+        const result = await updateHospitalProfile({
+          password: editPassword,
+          hospital_name: editHospitalName,
+          branch_name: editBranchName,
+          location: editLocation,
+          registration_id: editRegistrationId || undefined,
+          phone: editPhone || undefined,
+          specializations: editSpecializations || undefined,
+          accreditation: editAccreditation || undefined,
+        });
+        
+        if (result.error) {
+          setProfileError(result.error);
+        } else {
+          setProfileSuccess('Profile updated successfully!');
+          setShowEditProfile(false);
+          setEditPassword('');
+          // Refresh profile
+          const refreshResult = await getMyProfile();
+          if (refreshResult.data) {
+            setExtendedProfile(refreshResult.data);
+          }
+        }
+      }
+    } catch (error) {
+      setProfileError('Failed to update profile');
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -460,6 +614,393 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
+
+        {/* Personal/Hospital Information Section */}
+        <div className="glass-card p-6 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={`icon-box ${isHospital ? 'icon-box-emerald' : 'icon-box-purple'}`}>
+                {isHospital ? '🏥' : '👤'}
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">
+                {isHospital ? 'Hospital Information' : 'Personal Information'}
+              </h2>
+            </div>
+            <button
+              onClick={() => setShowEditProfile(true)}
+              className="btn-ghost text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit Profile
+            </button>
+          </div>
+
+          {profileSuccess && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg text-sm">
+              ✓ {profileSuccess}
+            </div>
+          )}
+
+          {extendedProfile?.profile_completed ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {isHospital ? (
+                // Hospital Profile Display
+                <>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Hospital Name</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as HospitalProfile).hospital_name || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Branch</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as HospitalProfile).branch_name || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Location</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as HospitalProfile).location || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Contact Phone</p>
+                    <p className="font-medium text-gray-900">{extendedProfile.phone || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Specializations</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as HospitalProfile).specializations || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Accreditation</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as HospitalProfile).accreditation || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4 col-span-2">
+                    <p className="text-sm text-gray-500 mb-1">Registration ID</p>
+                    <p className="font-medium text-gray-900 font-mono">{(extendedProfile as HospitalProfile).registration_id_masked || 'Not provided'}</p>
+                  </div>
+                </>
+              ) : (
+                // Patient Profile Display
+                <>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Full Name</p>
+                    <p className="font-medium text-gray-900">{extendedProfile.full_name || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Date of Birth</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as PatientProfile).date_of_birth || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Age</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as PatientProfile).age || '-'} years</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Gender</p>
+                    <p className="font-medium text-gray-900 capitalize">{(extendedProfile as PatientProfile).gender || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Blood Group</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as PatientProfile).blood_group || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Phone</p>
+                    <p className="font-medium text-gray-900">{extendedProfile.phone || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Emergency Contact</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as PatientProfile).emergency_contact || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-sm text-gray-500 mb-1">Aadhar Number</p>
+                    <p className="font-medium text-gray-900 font-mono">{(extendedProfile as PatientProfile).aadhar_masked || 'Not provided'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4 col-span-2">
+                    <p className="text-sm text-gray-500 mb-1">Address</p>
+                    <p className="font-medium text-gray-900">{(extendedProfile as PatientProfile).address || '-'}</p>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className={`border rounded-xl p-6 text-center ${isHospital ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+              <div className="text-4xl mb-3">{isHospital ? '🏥' : '📋'}</div>
+              <h3 className="font-semibold text-gray-900 mb-2">Complete Your Profile</h3>
+              <p className="text-gray-600 text-sm mb-4">
+                {isHospital 
+                  ? 'Add your hospital details so patients can identify you when you request access to their records.'
+                  : 'Add your personal information so hospitals can verify your identity when managing your health records.'
+                }
+              </p>
+              <button
+                onClick={() => setShowEditProfile(true)}
+                className="btn-neon"
+              >
+                {isHospital ? 'Add Hospital Info' : 'Add Personal Info'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Edit Profile Modal */}
+        {showEditProfile && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl my-8">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {isHospital ? '🏥 Edit Hospital Profile' : '👤 Edit Personal Profile'}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowEditProfile(false);
+                      setEditPassword('');
+                      setProfileError('');
+                    }}
+                    className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+                {profileError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                    ⚠️ {profileError}
+                  </div>
+                )}
+
+                {isHospital ? (
+                  // Hospital Edit Form
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Hospital Name *</label>
+                      <input
+                        type="text"
+                        value={editHospitalName}
+                        onChange={(e) => setEditHospitalName(e.target.value)}
+                        placeholder="e.g., Apollo Hospitals"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch Name *</label>
+                      <input
+                        type="text"
+                        value={editBranchName}
+                        onChange={(e) => setEditBranchName(e.target.value)}
+                        placeholder="e.g., Jubilee Hills Branch"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Location/City *</label>
+                      <input
+                        type="text"
+                        value={editLocation}
+                        onChange={(e) => setEditLocation(e.target.value)}
+                        placeholder="e.g., Hyderabad, Telangana"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Contact Phone</label>
+                      <input
+                        type="tel"
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                        placeholder="e.g., +91 40 2345 6789"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Specializations</label>
+                      <input
+                        type="text"
+                        value={editSpecializations}
+                        onChange={(e) => setEditSpecializations(e.target.value)}
+                        placeholder="e.g., Cardiology, Neurology, Orthopedics"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Comma-separated list</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Accreditation</label>
+                      <select
+                        value={editAccreditation}
+                        onChange={(e) => setEditAccreditation(e.target.value)}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <option value="">Select accreditation</option>
+                        <option value="NABH">NABH (National)</option>
+                        <option value="JCI">JCI (International)</option>
+                        <option value="NABL">NABL (Lab)</option>
+                        <option value="ISO">ISO Certified</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Registration ID
+                        <span className="text-xs text-gray-500 ml-1">(Encrypted & Private)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={editRegistrationId}
+                        onChange={(e) => setEditRegistrationId(e.target.value)}
+                        placeholder="Hospital registration number"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">🔒 This will be encrypted and only visible to you</p>
+                    </div>
+                  </>
+                ) : (
+                  // Patient Edit Form
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                      <input
+                        type="text"
+                        value={editFullName}
+                        onChange={(e) => setEditFullName(e.target.value)}
+                        placeholder="Enter your full name"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth *</label>
+                      <input
+                        type="date"
+                        value={editDob}
+                        onChange={(e) => setEditDob(e.target.value)}
+                        max={new Date().toISOString().split('T')[0]}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Gender *</label>
+                      <select
+                        value={editGender}
+                        onChange={(e) => setEditGender(e.target.value)}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <option value="">Select gender</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group</label>
+                      <select
+                        value={editBloodGroup}
+                        onChange={(e) => setEditBloodGroup(e.target.value)}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <option value="">Select blood group</option>
+                        <option value="A+">A+</option>
+                        <option value="A-">A-</option>
+                        <option value="B+">B+</option>
+                        <option value="B-">B-</option>
+                        <option value="AB+">AB+</option>
+                        <option value="AB-">AB-</option>
+                        <option value="O+">O+</option>
+                        <option value="O-">O-</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input
+                        type="tel"
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                        placeholder="+91 98765 43210"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Emergency Contact</label>
+                      <input
+                        type="text"
+                        value={editEmergencyContact}
+                        onChange={(e) => setEditEmergencyContact(e.target.value)}
+                        placeholder="Name: Phone"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Aadhar Number
+                        <span className="text-xs text-gray-500 ml-1">(Encrypted & Private)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={editAadhar}
+                        onChange={(e) => {
+                          // Format as XXXX-XXXX-XXXX
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 12);
+                          const formatted = val.replace(/(\d{4})(\d{4})?(\d{4})?/, (_, a, b, c) => 
+                            [a, b, c].filter(Boolean).join('-')
+                          );
+                          setEditAadhar(formatted);
+                        }}
+                        placeholder="1234-5678-9012"
+                        maxLength={14}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">🔒 This will be encrypted and only visible to you (masked)</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={editAddress}
+                        onChange={(e) => setEditAddress(e.target.value)}
+                        placeholder="Your address"
+                        rows={2}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Password Verification */}
+                <div className="border-t border-gray-200 pt-4 mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Confirm with Password *
+                  </label>
+                  <input
+                    type="password"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    placeholder="Enter your account password"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Required to save changes</p>
+                </div>
+              </div>
+              
+              <div className="p-4 bg-gray-50 rounded-b-2xl border-t border-gray-200 flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowEditProfile(false);
+                    setEditPassword('');
+                    setProfileError('');
+                  }}
+                  className="flex-1 btn-ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdateProfile}
+                  disabled={isUpdatingProfile || !editPassword}
+                  className="flex-1 btn-neon disabled:opacity-50"
+                >
+                  {isUpdatingProfile ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Encryption Keys Setup - For BOTH Patients and Hospitals */}
         {!userProfile?.public_key && (

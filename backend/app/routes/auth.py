@@ -1139,6 +1139,373 @@ async def generate_invite_public(request: PublicInviteGenerateRequest):
 
 
 # ============================================================================
+# Profile Management Endpoints
+# ============================================================================
+
+from app.db import (
+    create_or_update_patient_profile,
+    create_or_update_hospital_profile,
+    get_user_profile,
+    get_user_profile_public,
+    check_profile_completed,
+    PatientProfileCreate,
+    HospitalProfileCreate,
+    UserProfileResponse,
+    UserProfilePrivateResponse,
+)
+from app.utils.crypto import (
+    encrypt_field,
+    decrypt_field,
+    mask_aadhar,
+    mask_registration_id,
+    validate_aadhar,
+)
+from datetime import date
+
+
+class VerifyPasswordRequest(BaseModel):
+    """Request to verify password before sensitive operations."""
+    password: str
+
+
+class UpdatePatientProfileRequest(BaseModel):
+    """Request to update patient profile."""
+    password: str  # Required for verification
+    full_name: str
+    date_of_birth: str  # YYYY-MM-DD
+    gender: str  # male, female, other
+    aadhar: Optional[str] = None
+    blood_group: Optional[str] = None
+    phone: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    address: Optional[str] = None
+
+
+class UpdateHospitalProfileRequest(BaseModel):
+    """Request to update hospital profile."""
+    password: str  # Required for verification
+    hospital_name: str
+    branch_name: str
+    location: str
+    registration_id: Optional[str] = None
+    phone: Optional[str] = None
+    specializations: Optional[str] = None
+    accreditation: Optional[str] = None
+
+
+def calculate_age(date_of_birth: str) -> Optional[int]:
+    """Calculate age from date of birth string (YYYY-MM-DD)."""
+    try:
+        dob = date.fromisoformat(date_of_birth)
+        today = date.today()
+        age = today.year - dob.year
+        if (today.month, today.day) < (dob.month, dob.day):
+            age -= 1
+        return age
+    except (ValueError, TypeError):
+        return None
+
+
+@router.get("/profile")
+async def get_my_profile(current_user: dict = Depends(require_current_user)):
+    """
+    Get the current user's full profile (includes sensitive data masked).
+    
+    Returns all profile fields for the owner's view.
+    Sensitive fields like Aadhar are masked (XXXX-XXXX-1234).
+    """
+    profile = await get_user_profile(current_user["id"])
+    
+    if not profile:
+        return {
+            "user_id": current_user["id"],
+            "role": current_user.get("role", "patient"),
+            "profile_completed": False,
+            "message": "Profile not yet created. Please complete your profile.",
+        }
+    
+    role = current_user.get("role", "patient")
+    
+    response = {
+        "user_id": current_user["id"],
+        "role": role,
+        "full_name": profile.get("full_name"),
+        "phone": profile.get("phone"),
+        "profile_completed": bool(profile.get("profile_completed")),
+        "created_at": profile.get("created_at"),
+        "updated_at": profile.get("updated_at"),
+    }
+    
+    if role == "patient":
+        response.update({
+            "date_of_birth": profile.get("date_of_birth"),
+            "gender": profile.get("gender"),
+            "blood_group": profile.get("blood_group"),
+            "emergency_contact": profile.get("emergency_contact"),
+            "address": profile.get("address"),
+            "age": calculate_age(profile.get("date_of_birth")) if profile.get("date_of_birth") else None,
+        })
+        # Decrypt and mask Aadhar
+        if profile.get("aadhar_encrypted"):
+            decrypted = decrypt_field(profile["aadhar_encrypted"])
+            response["aadhar_masked"] = mask_aadhar(decrypted)
+        else:
+            response["aadhar_masked"] = None
+    else:
+        response.update({
+            "hospital_name": profile.get("hospital_name"),
+            "branch_name": profile.get("branch_name"),
+            "location": profile.get("location"),
+            "specializations": profile.get("specializations"),
+            "accreditation": profile.get("accreditation"),
+        })
+        # Decrypt and mask registration ID
+        if profile.get("registration_id_encrypted"):
+            decrypted = decrypt_field(profile["registration_id_encrypted"])
+            response["registration_id_masked"] = mask_registration_id(decrypted)
+        else:
+            response["registration_id_masked"] = None
+    
+    return response
+
+
+@router.get("/profile/{user_id}")
+async def get_user_profile_by_id(
+    user_id: int,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get another user's public profile.
+    
+    Returns only shareable fields - never sensitive data.
+    Used when viewing patient info (for hospitals) or hospital info (for patients).
+    """
+    profile = await get_user_profile_public(user_id)
+    
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User profile not found",
+        )
+    
+    role = profile.get("role", "patient")
+    
+    response = {
+        "user_id": user_id,
+        "role": role,
+        "full_name": profile.get("full_name"),
+        "profile_completed": bool(profile.get("profile_completed")),
+    }
+    
+    if role == "patient":
+        response.update({
+            "gender": profile.get("gender"),
+            "blood_group": profile.get("blood_group"),
+            # Calculate age from DOB (don't expose DOB)
+            "age": calculate_age(profile.get("date_of_birth")) if profile.get("date_of_birth") else None,
+        })
+    else:
+        response.update({
+            "hospital_name": profile.get("hospital_name"),
+            "branch_name": profile.get("branch_name"),
+            "location": profile.get("location"),
+            "specializations": profile.get("specializations"),
+            "accreditation": profile.get("accreditation"),
+        })
+    
+    return response
+
+
+@router.post("/verify-password")
+async def verify_password_endpoint(
+    request: VerifyPasswordRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Verify the user's password.
+    
+    Used before sensitive operations like viewing full Aadhar or editing profile.
+    """
+    if not current_user.get("password_hash"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password not set for this account",
+        )
+    
+    try:
+        ph.verify(current_user["password_hash"], request.password)
+        return {"verified": True, "message": "Password verified"}
+    except VerifyMismatchError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+
+
+@router.put("/profile/patient")
+async def update_patient_profile(
+    request: UpdatePatientProfileRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Update patient profile.
+    
+    Requires password verification for security.
+    Aadhar number is encrypted before storage.
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can update patient profiles",
+        )
+    
+    # Verify password
+    if not current_user.get("password_hash"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password not set for this account",
+        )
+    
+    try:
+        ph.verify(current_user["password_hash"], request.password)
+    except VerifyMismatchError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+    
+    # Validate date of birth
+    try:
+        dob = date.fromisoformat(request.date_of_birth)
+        if dob > date.today():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Date of birth cannot be in the future",
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Use YYYY-MM-DD",
+        )
+    
+    # Validate gender
+    if request.gender not in ["male", "female", "other"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Gender must be 'male', 'female', or 'other'",
+        )
+    
+    # Validate and encrypt Aadhar if provided
+    aadhar_encrypted = None
+    if request.aadhar:
+        is_valid, error = validate_aadhar(request.aadhar)
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error,
+            )
+        # Clean and encrypt
+        clean_aadhar = request.aadhar.replace("-", "").replace(" ", "")
+        aadhar_encrypted = encrypt_field(clean_aadhar)
+    
+    # Update profile
+    success = await create_or_update_patient_profile(
+        user_id=current_user["id"],
+        full_name=request.full_name,
+        date_of_birth=request.date_of_birth,
+        gender=request.gender,
+        aadhar_encrypted=aadhar_encrypted,
+        blood_group=request.blood_group,
+        phone=request.phone,
+        emergency_contact=request.emergency_contact,
+        address=request.address,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update profile",
+        )
+    
+    return {
+        "message": "Profile updated successfully",
+        "profile_completed": True,
+    }
+
+
+@router.put("/profile/hospital")
+async def update_hospital_profile(
+    request: UpdateHospitalProfileRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Update hospital profile.
+    
+    Requires password verification for security.
+    Registration ID is encrypted before storage.
+    """
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can update hospital profiles",
+        )
+    
+    # Verify password
+    if not current_user.get("password_hash"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password not set for this account",
+        )
+    
+    try:
+        ph.verify(current_user["password_hash"], request.password)
+    except VerifyMismatchError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+    
+    # Encrypt registration ID if provided
+    registration_id_encrypted = None
+    if request.registration_id:
+        registration_id_encrypted = encrypt_field(request.registration_id)
+    
+    # Update profile
+    success = await create_or_update_hospital_profile(
+        user_id=current_user["id"],
+        hospital_name=request.hospital_name,
+        branch_name=request.branch_name,
+        location=request.location,
+        registration_id_encrypted=registration_id_encrypted,
+        phone=request.phone,
+        specializations=request.specializations,
+        accreditation=request.accreditation,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update profile",
+        )
+    
+    return {
+        "message": "Profile updated successfully",
+        "profile_completed": True,
+    }
+
+
+@router.get("/profile/completed")
+async def check_profile_status(current_user: dict = Depends(require_current_user)):
+    """Check if the current user has completed their profile."""
+    completed = await check_profile_completed(current_user["id"])
+    return {
+        "user_id": current_user["id"],
+        "profile_completed": completed,
+        "needs_profile_upload": current_user.get("needs_profile_upload", True),
+    }
+
+
+# ============================================================================
 # Self-Test (run with: python -m app.routes.auth)
 # ============================================================================
 

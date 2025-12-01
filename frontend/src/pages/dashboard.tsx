@@ -437,13 +437,21 @@ export default function DashboardPage() {
                           className="flex items-center gap-3 p-3 rounded-xl hover:bg-indigo-50 transition-all group"
                         >
                           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
-                            {patient.patient_username.charAt(0).toUpperCase()}
+                            {(patient.patient_name || 'P').charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-gray-900 truncate group-hover:text-indigo-600">
-                              {patient.patient_username}
+                              {patient.patient_name || 'Patient (Profile incomplete)'}
+                            </p>
+                            <p className="text-xs text-gray-400 font-mono truncate">
+                              {patient.patient_uuid}
                             </p>
                             <p className="text-xs text-gray-500">
+                              {patient.profile_completed && patient.age ? `${patient.age} yrs` : ''} 
+                              {patient.profile_completed && patient.gender ? ` • ${patient.gender}` : ''}
+                              {patient.profile_completed && patient.blood_group ? ` • ${patient.blood_group}` : ''}
+                            </p>
+                            <p className="text-xs text-gray-400">
                               {patient.file_count} files • Access {patient.expires_at ? 'expires ' + formatDate(patient.expires_at) : 'permanent'}
                             </p>
                           </div>
