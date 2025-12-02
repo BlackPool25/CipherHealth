@@ -52,6 +52,8 @@ export default function FileViewer({
   const [passphrase, setPassphrase] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [privateKeyInput, setPrivateKeyInput] = useState(userPrivateKey || '');
+  const [imageZoom, setImageZoom] = useState(1);
+  const [textWrap, setTextWrap] = useState(true);
   
   // Determine if we need PRE mode (hospital viewing patient file)
   const needsPRE = isReencryption || isHospital;
@@ -260,24 +262,74 @@ export default function FileViewer({
 
     if (isImageFile(fileData.filename, fileData.contentType)) {
       return (
-        <div className="flex justify-center bg-gray-100 rounded-lg p-4">
-          <img 
-            src={dataUrl} 
-            alt={fileData.filename}
-            className="max-w-full max-h-96 object-contain rounded shadow"
-          />
+        <div className="space-y-3">
+          {/* Image Zoom Controls */}
+          <div className="flex items-center justify-center gap-2 bg-gray-100 rounded-lg p-2">
+            <button
+              onClick={() => setImageZoom(z => Math.max(0.25, z - 0.25))}
+              className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+              title="Zoom Out"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+              </svg>
+            </button>
+            <span className="text-sm font-medium text-gray-700 w-16 text-center">{Math.round(imageZoom * 100)}%</span>
+            <button
+              onClick={() => setImageZoom(z => Math.min(3, z + 0.25))}
+              className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+              title="Zoom In"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setImageZoom(1)}
+              className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+              title="Reset Zoom"
+            >
+              Reset
+            </button>
+          </div>
+          {/* Image Preview with zoom */}
+          <div className="bg-gray-100 rounded-lg overflow-auto max-h-[500px] flex items-center justify-center p-4">
+            <img 
+              src={dataUrl} 
+              alt={fileData.filename}
+              className="rounded shadow transition-transform duration-200 max-w-full h-auto object-contain"
+              style={{ 
+                transform: `scale(${imageZoom})`, 
+                transformOrigin: 'center',
+                maxHeight: imageZoom === 1 ? '450px' : 'none'
+              }}
+            />
+          </div>
         </div>
       );
     }
 
     if (isPdfFile(fileData.filename, fileData.contentType)) {
       return (
-        <div className="w-full h-96 bg-gray-100 rounded-lg">
-          <iframe 
-            src={dataUrl} 
-            className="w-full h-full rounded-lg"
-            title={fileData.filename}
-          />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+            <span className="text-sm text-gray-600">📄 PDF Document</span>
+            <a
+              href={dataUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+            >
+              Open in New Tab
+            </a>
+          </div>
+          <div className="w-full h-96 bg-gray-100 rounded-lg">
+            <iframe 
+              src={dataUrl} 
+              className="w-full h-full rounded-lg"
+              title={fileData.filename}
+            />
+          </div>
         </div>
       );
     }
@@ -286,10 +338,33 @@ export default function FileViewer({
       try {
         const textContent = atob(fileData.content);
         return (
-          <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-auto">
-            <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
-              {textContent}
-            </pre>
+          <div className="space-y-2">
+            {/* Text Controls */}
+            <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+              <span className="text-sm text-gray-600">📝 Text File</span>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={textWrap}
+                    onChange={(e) => setTextWrap(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Wrap Text
+                </label>
+                <button
+                  onClick={() => navigator.clipboard.writeText(textContent)}
+                  className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                >
+                  Copy All
+                </button>
+              </div>
+            </div>
+            <div className="bg-gray-900 text-gray-100 rounded-lg p-4 max-h-96 overflow-auto">
+              <pre className={`text-sm font-mono ${textWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>
+                {textContent}
+              </pre>
+            </div>
           </div>
         );
       } catch {
@@ -301,17 +376,57 @@ export default function FileViewer({
       }
     }
 
-    // Default: show file info and download button
+    // Default: show file info with enhanced type detection
+    const getFileIcon = () => {
+      const fname = fileData.filename.toLowerCase();
+      const mime = fileData.contentType;
+      
+      // Word documents
+      if (fname.endsWith('.doc') || fname.endsWith('.docx') || 
+          mime.includes('msword') || mime.includes('wordprocessingml')) {
+        return { icon: '📄', label: 'Word Document', color: 'blue' };
+      }
+      // Excel spreadsheets
+      if (fname.endsWith('.xls') || fname.endsWith('.xlsx') || 
+          mime.includes('spreadsheet') || mime.includes('excel')) {
+        return { icon: '📊', label: 'Excel Spreadsheet', color: 'green' };
+      }
+      // PowerPoint
+      if (fname.endsWith('.ppt') || fname.endsWith('.pptx') || 
+          mime.includes('presentation') || mime.includes('powerpoint')) {
+        return { icon: '📽️', label: 'PowerPoint Presentation', color: 'orange' };
+      }
+      // Archives
+      if (fname.endsWith('.zip') || fname.endsWith('.rar') || 
+          fname.endsWith('.7z') || mime.includes('zip') || mime.includes('archive')) {
+        return { icon: '📦', label: 'Archive File', color: 'yellow' };
+      }
+      // Audio
+      if (mime.startsWith('audio/') || fname.endsWith('.mp3') || 
+          fname.endsWith('.wav') || fname.endsWith('.ogg')) {
+        return { icon: '🎵', label: 'Audio File', color: 'purple' };
+      }
+      // Video
+      if (mime.startsWith('video/') || fname.endsWith('.mp4') || 
+          fname.endsWith('.avi') || fname.endsWith('.mov')) {
+        return { icon: '🎬', label: 'Video File', color: 'red' };
+      }
+      // Default
+      return { icon: '📎', label: 'File', color: 'gray' };
+    };
+    
+    const fInfo = getFileIcon();
+    
     return (
       <div className="text-center py-8 bg-gray-50 rounded-lg">
-        <svg className="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <p className="mt-4 text-gray-600">
-          Preview not available for this file type
-        </p>
-        <p className="text-sm text-gray-500 mt-1">
-          {fileData.contentType} • {(fileData.size / 1024).toFixed(1)} KB
+        <div className={`mx-auto w-20 h-20 bg-${fInfo.color}-100 rounded-2xl flex items-center justify-center mb-4`}>
+          <span className="text-4xl">{fInfo.icon}</span>
+        </div>
+        <p className="text-lg font-semibold text-gray-800">{fileData.filename}</p>
+        <p className="text-sm text-gray-500 mt-1">{fInfo.label} • {(fileData.size / 1024).toFixed(1)} KB</p>
+        <p className="text-xs text-gray-400 mt-0.5">{fileData.contentType}</p>
+        <p className="text-xs text-gray-400 mt-3">
+          Download the file to view with appropriate application
         </p>
       </div>
     );

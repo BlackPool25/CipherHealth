@@ -40,6 +40,7 @@ import {
   getFilesSharedWithMe,
   shareFilesWithPatient,
   revokePatientShare,
+  bulkRevokePatientShares,
   getPatientPublicKey,
   decryptSharedFile,
   PatientGrantEntry,
@@ -470,8 +471,11 @@ export default function HospitalAccessPage() {
   const [isSharing, setIsSharing] = useState(false);
   const [shareError, setShareError] = useState('');
   const [isRevokingShare, setIsRevokingShare] = useState<number | null>(null);
+  const [isBulkRevoking, setIsBulkRevoking] = useState<number | null>(null);
   const [patientToShare, setPatientToShare] = useState<{uuid: string; name: string | null; hasKey: boolean} | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [expandedPatientGroup, setExpandedPatientGroup] = useState<number | null>(null);
+  const [expandedSharedFromGroup, setExpandedSharedFromGroup] = useState<number | null>(null);
 
   // View Shared File State
   const [showViewSharedModal, setShowViewSharedModal] = useState(false);
@@ -480,6 +484,8 @@ export default function HospitalAccessPage() {
   const [viewError, setViewError] = useState('');
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<{data: string; mimeType: string; filename: string} | null>(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [textWrap, setTextWrap] = useState(true);
 
   // Records Tab State
   const [patientRecords, setPatientRecords] = useState<PatientFileRecord[]>([]);
@@ -493,6 +499,9 @@ export default function HospitalAccessPage() {
   const [keyBackup, setKeyBackup] = useState<string>('');
   const [importKeyInput, setImportKeyInput] = useState('');
   const [keyMessage, setKeyMessage] = useState('');
+
+  // Track if "Shared With Me" tab has been viewed (for notification dismissal)
+  const [hasViewedSharedWithMeTab, setHasViewedSharedWithMeTab] = useState(false);
 
   // Handle query parameters for deep linking
   useEffect(() => {
@@ -871,8 +880,7 @@ export default function HospitalAccessPage() {
           filename: result.data.filename || viewingSharedFile.filename || 'decrypted_file',
         });
         
-        // Mark as viewed - remove from "new" notifications
-        markSharedFileAsViewed(viewingSharedFile.grant_id);
+        // No longer mark as viewed here - we mark when tab is opened
       }
     } catch (err) {
       setViewError(err instanceof Error ? err.message : 'Failed to decrypt file');
@@ -881,27 +889,29 @@ export default function HospitalAccessPage() {
     }
   };
 
-  // Mark shared file as viewed (dismisses notification)
-  const markSharedFileAsViewed = (grantId: number) => {
+  // Mark all shared files as viewed (called when tab is opened)
+  const markAllSharedFilesAsViewed = () => {
     const viewedKey = 'viewed_shared_files';
     const viewed = JSON.parse(localStorage.getItem(viewedKey) || '[]');
-    if (!viewed.includes(grantId)) {
-      viewed.push(grantId);
-      localStorage.setItem(viewedKey, JSON.stringify(viewed));
-    }
+    const activeGrants = filesSharedWithMe.filter(f => f.status === 'active').map(f => f.grant_id);
+    const newViewed = [...new Set([...viewed, ...activeGrants])];
+    localStorage.setItem(viewedKey, JSON.stringify(newViewed));
+    setHasViewedSharedWithMeTab(true);
   };
 
-  // Check if a shared file has been viewed
+  // Check if a specific shared file has been viewed (for individual file indicators - deprecated, now using tab-level)
   const isSharedFileViewed = (grantId: number): boolean => {
+    if (hasViewedSharedWithMeTab) return true;
     const viewed = JSON.parse(localStorage.getItem('viewed_shared_files') || '[]');
     return viewed.includes(grantId);
   };
 
-  // Count of unviewed shared files (for notification badge)
+  // Count of unviewed shared files (for notification badge) - only show if tab hasn't been viewed this session
   const unviewedSharedFilesCount = useMemo(() => {
+    if (hasViewedSharedWithMeTab) return 0;
     const viewed = JSON.parse(localStorage.getItem('viewed_shared_files') || '[]');
     return filesSharedWithMe.filter(f => f.status === 'active' && !viewed.includes(f.grant_id)).length;
-  }, [filesSharedWithMe]);
+  }, [filesSharedWithMe, hasViewedSharedWithMeTab]);
 
   const handleCloseViewModal = () => {
     setShowViewSharedModal(false);
@@ -909,7 +919,108 @@ export default function HospitalAccessPage() {
     setViewPassphrase('');
     setViewError('');
     setDecryptedContent(null);
+    setImageZoom(1);
+    setTextWrap(true);
   };
+
+  // Save decrypted shared file to disk
+  const handleSaveSharedFile = () => {
+    if (!decryptedContent) return;
+
+    try {
+      // Convert base64 to blob
+      const byteCharacters = atob(decryptedContent.data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: decryptedContent.mimeType });
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = decryptedContent.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch {
+      console.error('Failed to save file');
+    }
+  };
+
+  // Bulk revoke all shares to a specific patient
+  const handleBulkRevokePatientShares = async (granteeId: number, granteeName: string | null, fileCount: number) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to revoke access to ALL ${fileCount} file(s) shared with ${granteeName || 'this patient'}? They will no longer be able to access any of these files.`
+    );
+    if (!confirmed) return;
+
+    setIsBulkRevoking(granteeId);
+    setError('');
+
+    const result = await bulkRevokePatientShares(granteeId);
+
+    if (result.error) {
+      setError(result.error);
+      setIsBulkRevoking(null);
+      return;
+    }
+
+    if (result.data) {
+      setSuccess(`Revoked ${result.data.revoked_count} file share(s).${result.data.failed_count > 0 ? ` (${result.data.failed_count} failed)` : ''}`);
+      if (result.data.tx_hashes.length > 0) {
+        setLastTxHash(result.data.tx_hashes[0]);
+      }
+      await loadData();
+      setActiveTab('patient-history');
+    }
+
+    setIsBulkRevoking(null);
+  };
+
+  // Group active patient shares by grantee
+  const groupedActiveShares = useMemo(() => {
+    const groups: Map<number, { grantee_id: number; grantee_name: string | null; shares: PatientGrantEntry[] }> = new Map();
+    
+    activePatientShares.forEach(share => {
+      const existing = groups.get(share.grantee_patient_id);
+      if (existing) {
+        existing.shares.push(share);
+      } else {
+        groups.set(share.grantee_patient_id, {
+          grantee_id: share.grantee_patient_id,
+          grantee_name: share.grantee_name,
+          shares: [share],
+        });
+      }
+    });
+    
+    return Array.from(groups.values());
+  }, [activePatientShares]);
+
+  // Group files shared with me by granter
+  const groupedFilesSharedWithMe = useMemo(() => {
+    const activeFiles = filesSharedWithMe.filter(f => f.status === 'active');
+    const groups: Map<number, { granter_id: number; granter_name: string | null; shares: PatientAccessEntry[] }> = new Map();
+    
+    activeFiles.forEach(share => {
+      const existing = groups.get(share.granter_patient_id);
+      if (existing) {
+        existing.shares.push(share);
+      } else {
+        groups.set(share.granter_patient_id, {
+          granter_id: share.granter_patient_id,
+          granter_name: share.granter_name,
+          shares: [share],
+        });
+      }
+    });
+    
+    return Array.from(groups.values());
+  }, [filesSharedWithMe]);
 
   // Key management functions
   const handleGenerateKeys = async () => {
@@ -1431,7 +1542,7 @@ export default function HospitalAccessPage() {
             {/* Tabs */}
             <div className="flex border-b border-gray-200">
               <button
-                onClick={() => { setActiveTab('patient-sharing'); setExpandedCard(null); }}
+                onClick={() => { setActiveTab('patient-sharing'); setExpandedCard(null); setExpandedPatientGroup(null); }}
                 className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
                   activeTab === 'patient-sharing'
                     ? 'text-purple-600 bg-purple-50'
@@ -1440,8 +1551,8 @@ export default function HospitalAccessPage() {
               >
                 <span className="flex items-center justify-center gap-2">
                   📤 Active Shares
-                  {activePatientShares.length > 0 && (
-                    <span className="text-xs text-gray-400">({activePatientShares.length})</span>
+                  {groupedActiveShares.length > 0 && (
+                    <span className="text-xs text-gray-400">({activePatientShares.length} files to {groupedActiveShares.length} patient{groupedActiveShares.length !== 1 ? 's' : ''})</span>
                   )}
                 </span>
                 {activeTab === 'patient-sharing' && (
@@ -1449,7 +1560,13 @@ export default function HospitalAccessPage() {
                 )}
               </button>
               <button
-                onClick={() => { setActiveTab('shared-with-me'); setExpandedCard(null); }}
+                onClick={() => { 
+                  setActiveTab('shared-with-me'); 
+                  setExpandedCard(null); 
+                  setExpandedSharedFromGroup(null);
+                  // Mark all files as viewed when opening this tab
+                  markAllSharedFilesAsViewed();
+                }}
                 className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
                   activeTab === 'shared-with-me'
                     ? 'text-blue-600 bg-blue-50'
@@ -1463,8 +1580,8 @@ export default function HospitalAccessPage() {
                       {unviewedSharedFilesCount} new
                     </span>
                   )}
-                  {unviewedSharedFilesCount === 0 && filesSharedWithMe.filter(f => f.status === 'active').length > 0 && (
-                    <span className="text-xs text-gray-400">({filesSharedWithMe.filter(f => f.status === 'active').length})</span>
+                  {unviewedSharedFilesCount === 0 && groupedFilesSharedWithMe.length > 0 && (
+                    <span className="text-xs text-gray-400">({filesSharedWithMe.filter(f => f.status === 'active').length} files from {groupedFilesSharedWithMe.length} patient{groupedFilesSharedWithMe.length !== 1 ? 's' : ''})</span>
                   )}
                 </span>
                 {activeTab === 'shared-with-me' && (
@@ -1510,7 +1627,7 @@ export default function HospitalAccessPage() {
                     <span>➕</span> Share Files with Another Patient
                   </button>
 
-                  {activePatientShares.length === 0 ? (
+                  {groupedActiveShares.length === 0 ? (
                     <div className="text-center py-8">
                       <span className="text-4xl">📤</span>
                       <p className="text-gray-500 mt-3">No active shares</p>
@@ -1518,69 +1635,92 @@ export default function HospitalAccessPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {activePatientShares.map((share) => {
-                        const isExpanded = expandedShareId === share.grant_id;
+                      {/* Grouped by patient */}
+                      {groupedActiveShares.map((group) => {
+                        const isGroupExpanded = expandedPatientGroup === group.grantee_id;
                         return (
                           <div 
-                            key={share.grant_id}
+                            key={group.grantee_id}
                             className="bg-purple-50 rounded-xl border border-purple-100 overflow-hidden"
                           >
-                            {/* Collapsed Header */}
+                            {/* Patient Group Header */}
                             <div 
                               className="flex items-center gap-3 p-4 cursor-pointer hover:bg-purple-100/50 transition-colors"
-                              onClick={() => setExpandedShareId(isExpanded ? null : share.grant_id)}
+                              onClick={() => setExpandedPatientGroup(isGroupExpanded ? null : group.grantee_id)}
                             >
-                              <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
-                                <span className="text-white font-bold text-sm">
-                                  {share.grantee_name?.charAt(0).toUpperCase() || '?'}
+                              <div className="w-12 h-12 bg-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span className="text-white font-bold text-lg">
+                                  {group.grantee_name?.charAt(0).toUpperCase() || '?'}
                                 </span>
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-gray-900 truncate">{share.grantee_name || 'Unknown Patient'}</p>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-xs text-gray-500 truncate">{share.filename}</span>
-                                </div>
+                                <p className="font-semibold text-gray-900 text-lg">{group.grantee_name || 'Unknown Patient'}</p>
+                                <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared</span>
                               </div>
-                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 flex-shrink-0">
-                                Active
-                              </span>
-                              <svg 
-                                className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                                  {group.shares.length} Active
+                                </span>
+                                <svg 
+                                  className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
+                                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
                             </div>
 
-                            {/* Expanded Content */}
-                            {isExpanded && (
+                            {/* Expanded: List of files + bulk revoke */}
+                            {isGroupExpanded && (
                               <div className="px-4 pb-4 border-t border-purple-100 bg-white/50">
                                 <div className="pt-4 space-y-3">
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="text-gray-500">Shared on</span>
-                                    <span className="text-gray-900">{new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                  </div>
-                                  {share.expires_at && (
-                                    <div className="flex items-center justify-between text-sm">
-                                      <span className="text-gray-500">Expires</span>
-                                      <span className="text-gray-900">{new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                    </div>
-                                  )}
-                                  {share.tx_hash && (
-                                    <div>
-                                      <TxHashDisplay txHash={share.tx_hash} label="TX" />
-                                    </div>
-                                  )}
+                                  {/* Bulk Revoke Button */}
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleRevokePatientShare(share.grant_id);
+                                      handleBulkRevokePatientShares(group.grantee_id, group.grantee_name, group.shares.length);
                                     }}
-                                    disabled={isRevokingShare === share.grant_id}
-                                    className="w-full py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors"
+                                    disabled={isBulkRevoking === group.grantee_id}
+                                    className="w-full py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                                   >
-                                    {isRevokingShare === share.grant_id ? 'Revoking...' : '↩ Revoke Access'}
+                                    {isBulkRevoking === group.grantee_id ? (
+                                      <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                        Revoking all...
+                                      </>
+                                    ) : (
+                                      <>↩ Revoke All {group.shares.length} File{group.shares.length !== 1 ? 's' : ''}</>
+                                    )}
                                   </button>
+                                  
+                                  {/* Individual files */}
+                                  <div className="space-y-2 mt-3">
+                                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Shared Files</p>
+                                    {group.shares.map((share) => (
+                                      <div 
+                                        key={share.grant_id}
+                                        className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
+                                      >
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
+                                          <p className="text-xs text-gray-400">
+                                            {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                            {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                          </p>
+                                        </div>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRevokePatientShare(share.grant_id);
+                                          }}
+                                          disabled={isRevokingShare === share.grant_id}
+                                          className="ml-2 px-3 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md font-medium transition-colors"
+                                        >
+                                          {isRevokingShare === share.grant_id ? '...' : 'Revoke'}
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
                             )}
@@ -1669,7 +1809,7 @@ export default function HospitalAccessPage() {
                   </div>
                 )
               ) : activeTab === 'shared-with-me' ? (
-                filesSharedWithMe.length === 0 ? (
+                groupedFilesSharedWithMe.length === 0 ? (
                   <div className="text-center py-12">
                     <span className="text-4xl">📥</span>
                     <p className="text-gray-500 mt-3">No files shared with you</p>
@@ -1677,72 +1817,69 @@ export default function HospitalAccessPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {filesSharedWithMe.map((share) => {
-                      const isExpanded = expandedShareId === share.grant_id;
-                      const isNew = share.status === 'active' && !isSharedFileViewed(share.grant_id);
+                    {/* Grouped by patient */}
+                    {groupedFilesSharedWithMe.map((group) => {
+                      const isGroupExpanded = expandedSharedFromGroup === group.granter_id;
                       return (
                         <div 
-                          key={share.grant_id}
-                          className={`rounded-xl border overflow-hidden ${isNew ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-400' : 'bg-blue-50 border-blue-100'}`}
+                          key={group.granter_id}
+                          className="bg-blue-50 rounded-xl border border-blue-100 overflow-hidden"
                         >
-                          {/* Collapsed Header */}
+                          {/* Patient Group Header */}
                           <div 
                             className="flex items-center gap-3 p-4 cursor-pointer hover:bg-blue-100/50 transition-colors"
-                            onClick={() => setExpandedShareId(isExpanded ? null : share.grant_id)}
+                            onClick={() => setExpandedSharedFromGroup(isGroupExpanded ? null : group.granter_id)}
                           >
-                            <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                              <span className="text-white font-bold text-sm">
-                                {share.granter_name?.charAt(0).toUpperCase() || '?'}
+                            <div className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                              <span className="text-white font-bold text-lg">
+                                {group.granter_name?.charAt(0).toUpperCase() || '?'}
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-gray-900 truncate">{share.granter_name || 'Unknown Patient'}</p>
-                              <span className="text-xs text-gray-500 truncate">{share.filename}</span>
+                              <p className="font-semibold text-gray-900 text-lg">{group.granter_name || 'Unknown Patient'}</p>
+                              <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared with you</span>
                             </div>
-                            {isNew && (
-                              <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-blue-500 text-white animate-pulse flex-shrink-0">
-                                NEW
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                                {group.shares.length} Active
                               </span>
-                            )}
-                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full flex-shrink-0 ${
-                              share.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                            }`}>
-                              {share.status === 'active' ? 'Active' : share.status}
-                            </span>
-                            <svg 
-                              className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                              fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
+                              <svg 
+                                className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
+                                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
                           </div>
 
-                          {/* Expanded Content */}
-                          {isExpanded && (
+                          {/* Expanded: List of files */}
+                          {isGroupExpanded && (
                             <div className="px-4 pb-4 border-t border-blue-100 bg-white/50">
-                              <div className="pt-4 space-y-3">
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-500">Shared on</span>
-                                  <span className="text-gray-900">{new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                </div>
-                                {share.expires_at && (
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="text-gray-500">Expires</span>
-                                    <span className="text-gray-900">{new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                  </div>
-                                )}
-                                {share.status === 'active' && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setViewingSharedFile(share);
-                                      setShowViewSharedModal(true);
-                                    }}
-                                    className="w-full py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                              <div className="pt-4 space-y-2">
+                                {group.shares.map((share) => (
+                                  <div 
+                                    key={share.grant_id}
+                                    className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
                                   >
-                                    🔓 View & Decrypt
-                                  </button>
-                                )}
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
+                                      <p className="text-xs text-gray-400">
+                                        {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setViewingSharedFile(share);
+                                        setShowViewSharedModal(true);
+                                      }}
+                                      className="ml-2 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-700 transition-colors"
+                                    >
+                                      🔓 View
+                                    </button>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           )}
@@ -2478,44 +2615,192 @@ export default function HospitalAccessPage() {
                   </>
                 ) : (
                   <div className="space-y-4">
-                    <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
                       <p className="text-sm text-green-700 font-medium">✓ File decrypted successfully</p>
+                      <button
+                        onClick={handleSaveSharedFile}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Save File
+                      </button>
                     </div>
 
                     {/* Display decrypted content based on mime type */}
                     {decryptedContent.mimeType.startsWith('image/') ? (
-                      <div className="flex justify-center">
-                        <img 
-                          src={`data:${decryptedContent.mimeType};base64,${decryptedContent.data}`}
-                          alt={decryptedContent.filename}
-                          className="max-w-full max-h-[400px] rounded-lg shadow-md"
-                        />
+                      <div className="space-y-3">
+                        {/* Image Zoom Controls */}
+                        <div className="flex items-center justify-center gap-2 bg-gray-100 rounded-lg p-2">
+                          <button
+                            onClick={() => setImageZoom(z => Math.max(0.25, z - 0.25))}
+                            className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                            title="Zoom Out"
+                          >
+                            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                            </svg>
+                          </button>
+                          <span className="text-sm font-medium text-gray-700 w-16 text-center">{Math.round(imageZoom * 100)}%</span>
+                          <button
+                            onClick={() => setImageZoom(z => Math.min(3, z + 0.25))}
+                            className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                            title="Zoom In"
+                          >
+                            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => setImageZoom(1)}
+                            className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                            title="Reset Zoom"
+                          >
+                            Reset
+                          </button>
+                          <button
+                            onClick={() => setImageZoom(z => Math.min(3, z + 0.5))}
+                            className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                            title="Fit to View"
+                          >
+                            Fit
+                          </button>
+                        </div>
+                        {/* Image Preview with zoom */}
+                        <div className="bg-gray-100 rounded-lg overflow-auto max-h-[500px] flex items-center justify-center p-4">
+                          <img 
+                            src={`data:${decryptedContent.mimeType};base64,${decryptedContent.data}`}
+                            alt={decryptedContent.filename}
+                            className="rounded-lg shadow-md transition-transform duration-200 max-w-full h-auto object-contain"
+                            style={{ 
+                              transform: `scale(${imageZoom})`, 
+                              transformOrigin: 'center',
+                              maxHeight: imageZoom === 1 ? '450px' : 'none'
+                            }}
+                          />
+                        </div>
                       </div>
                     ) : decryptedContent.mimeType === 'application/pdf' ? (
-                      <div className="border rounded-lg overflow-hidden">
-                        <iframe
-                          src={`data:application/pdf;base64,${decryptedContent.data}`}
-                          className="w-full h-[400px]"
-                          title={decryptedContent.filename}
-                        />
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+                          <span className="text-sm text-gray-600">📄 PDF Document</span>
+                          <a
+                            href={`data:application/pdf;base64,${decryptedContent.data}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          >
+                            Open in New Tab
+                          </a>
+                        </div>
+                        <div className="border rounded-lg overflow-hidden">
+                          <iframe
+                            src={`data:application/pdf;base64,${decryptedContent.data}`}
+                            className="w-full h-[450px]"
+                            title={decryptedContent.filename}
+                          />
+                        </div>
                       </div>
-                    ) : decryptedContent.mimeType.startsWith('text/') ? (
-                      <div className="bg-gray-900 text-gray-100 rounded-lg p-4 max-h-[400px] overflow-auto">
-                        <pre className="text-sm whitespace-pre-wrap font-mono">
-                          {atob(decryptedContent.data)}
-                        </pre>
+                    ) : decryptedContent.mimeType.startsWith('text/') || 
+                       decryptedContent.mimeType === 'application/json' ||
+                       decryptedContent.mimeType === 'application/xml' ? (
+                      <div className="space-y-2">
+                        {/* Text Controls */}
+                        <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+                          <span className="text-sm text-gray-600">📝 Text File</span>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                              <input
+                                type="checkbox"
+                                checked={textWrap}
+                                onChange={(e) => setTextWrap(e.target.checked)}
+                                className="rounded border-gray-300"
+                              />
+                              Wrap Text
+                            </label>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(atob(decryptedContent.data));
+                              }}
+                              className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                            >
+                              Copy All
+                            </button>
+                          </div>
+                        </div>
+                        <div className="bg-gray-900 text-gray-100 rounded-lg p-4 max-h-[400px] overflow-auto">
+                          <pre className={`text-sm font-mono ${textWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>
+                            {atob(decryptedContent.data)}
+                          </pre>
+                        </div>
                       </div>
                     ) : (
-                      <div className="text-center py-4">
-                        <p className="text-gray-600 mb-4">File decrypted. Click below to download.</p>
-                        <a
-                          href={`data:${decryptedContent.mimeType};base64,${decryptedContent.data}`}
-                          download={decryptedContent.filename}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-                        >
-                          <span>📥</span> Download {decryptedContent.filename}
-                        </a>
-                      </div>
+                      /* Default file handler with enhanced file type display */
+                      (() => {
+                        const getFileIcon = () => {
+                          const filename = decryptedContent.filename.toLowerCase();
+                          const mime = decryptedContent.mimeType;
+                          
+                          // Word documents
+                          if (filename.endsWith('.doc') || filename.endsWith('.docx') || 
+                              mime.includes('msword') || mime.includes('wordprocessingml')) {
+                            return { icon: '📄', label: 'Word Document', color: 'blue' };
+                          }
+                          // Excel spreadsheets
+                          if (filename.endsWith('.xls') || filename.endsWith('.xlsx') || 
+                              mime.includes('spreadsheet') || mime.includes('excel')) {
+                            return { icon: '📊', label: 'Excel Spreadsheet', color: 'green' };
+                          }
+                          // PowerPoint
+                          if (filename.endsWith('.ppt') || filename.endsWith('.pptx') || 
+                              mime.includes('presentation') || mime.includes('powerpoint')) {
+                            return { icon: '📽️', label: 'PowerPoint Presentation', color: 'orange' };
+                          }
+                          // Archives
+                          if (filename.endsWith('.zip') || filename.endsWith('.rar') || 
+                              filename.endsWith('.7z') || mime.includes('zip') || mime.includes('archive')) {
+                            return { icon: '📦', label: 'Archive File', color: 'yellow' };
+                          }
+                          // Audio
+                          if (mime.startsWith('audio/') || filename.endsWith('.mp3') || 
+                              filename.endsWith('.wav') || filename.endsWith('.ogg')) {
+                            return { icon: '🎵', label: 'Audio File', color: 'purple' };
+                          }
+                          // Video
+                          if (mime.startsWith('video/') || filename.endsWith('.mp4') || 
+                              filename.endsWith('.avi') || filename.endsWith('.mov')) {
+                            return { icon: '🎬', label: 'Video File', color: 'red' };
+                          }
+                          // Default
+                          return { icon: '📎', label: 'File', color: 'gray' };
+                        };
+                        
+                        const fileInfo = getFileIcon();
+                        
+                        return (
+                          <div className="text-center py-8 bg-gray-50 rounded-lg">
+                            <div className={`mx-auto w-20 h-20 bg-${fileInfo.color}-100 rounded-2xl flex items-center justify-center mb-4`}>
+                              <span className="text-4xl">{fileInfo.icon}</span>
+                            </div>
+                            <p className="text-lg font-semibold text-gray-800">{decryptedContent.filename}</p>
+                            <p className="text-sm text-gray-500 mt-1">{fileInfo.label}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{decryptedContent.mimeType}</p>
+                            <button
+                              onClick={handleSaveSharedFile}
+                              className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-md"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                              Download to View
+                            </button>
+                            <p className="text-xs text-gray-400 mt-3">
+                              This file type cannot be previewed in browser. Download to view with appropriate application.
+                            </p>
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                 )}
@@ -2542,6 +2827,17 @@ export default function HospitalAccessPage() {
                     ) : (
                       'Decrypt & View'
                     )}
+                  </button>
+                )}
+                {decryptedContent && (
+                  <button
+                    onClick={handleSaveSharedFile}
+                    className="flex-1 btn-primary flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Save to Device
                   </button>
                 )}
               </div>

@@ -2992,6 +2992,11 @@ class RevokePatientShareRequest(BaseModel):
     grant_id: int
 
 
+class BulkRevokePatientSharesRequest(BaseModel):
+    """Request to revoke all shares to a specific patient."""
+    grantee_patient_id: int
+
+
 async def create_patient_file_grant(
     granter_patient_id: int,
     grantee_patient_id: int,
@@ -3046,9 +3051,12 @@ async def get_patient_file_grants(granter_patient_id: int) -> list[dict]:
                 pfg.expires_at,
                 pfg.revoked_at,
                 pfg.tx_hash,
+                pfg.grant_cid_hash,
+                pfg.granter_identifier,
+                pfg.grantee_identifier,
                 f.filename,
                 u.uuid as grantee_uuid,
-                up.full_name as grantee_name
+                COALESCE(up.full_name, u.username, u.email, 'Patient ' || u.id) as grantee_name
             FROM patient_file_grants pfg
             JOIN files f ON pfg.file_id = f.id
             JOIN users u ON pfg.grantee_patient_id = u.id
@@ -3082,7 +3090,7 @@ async def get_files_shared_with_patient(grantee_patient_id: int) -> list[dict]:
                 f.capsule,
                 f.encrypted_cek,
                 u.uuid as granter_uuid,
-                up.full_name as granter_name
+                COALESCE(up.full_name, u.username, u.email, 'Patient ' || u.id) as granter_name
             FROM patient_file_grants pfg
             JOIN files f ON pfg.file_id = f.id
             JOIN users u ON pfg.granter_patient_id = u.id
@@ -3681,6 +3689,113 @@ async def revoke_patient_share(
         "etherscan_url": get_etherscan_url(tx_hash) if tx_hash else None,
         "kfrag_revoked": kfrag_revoked,
         "message": "File share revoked" + (" (recorded on-chain)" if tx_hash else ""),
+    }
+
+
+@router.post("/bulk-revoke-patient-shares")
+async def bulk_revoke_patient_shares(
+    request: BulkRevokePatientSharesRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Revoke all file shares to a specific patient (bulk revoke).
+    
+    This removes all of the patient's ability to access shared files from the granter.
+    
+    Args:
+        request: Contains grantee_patient_id to revoke all shares for
+        current_user: Authenticated patient (must be the granter)
+        
+    Returns:
+        Bulk revocation confirmation with count of revoked shares
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can revoke shares",
+        )
+    
+    granter_id = current_user["id"]
+    grantee_id = request.grantee_patient_id
+    
+    # Get all active grants to this grantee
+    all_grants = await get_patient_file_grants(granter_id)
+    active_grants = [
+        g for g in all_grants 
+        if g["grantee_patient_id"] == grantee_id and g["status"] == "active"
+    ]
+    
+    if not active_grants:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active shares found for this patient",
+        )
+    
+    revoked_count = 0
+    failed_count = 0
+    tx_hashes = []
+    
+    # Revoke each grant
+    for grant in active_grants:
+        try:
+            # Try on-chain revocation if we have the necessary data
+            tx_hash = None
+            stored_cid_hash = grant.get("grant_cid_hash")
+            granter_identifier = grant.get("granter_identifier")
+            grantee_identifier = grant.get("grantee_identifier")
+            
+            if is_chain_configured() and stored_cid_hash:
+                try:
+                    tx_hash = await revoke_hospital_access_onchain(
+                        stored_cid_hash=stored_cid_hash,
+                        patient_identifier=granter_identifier,
+                        hospital_identifier=grantee_identifier,
+                    )
+                    if tx_hash:
+                        tx_hashes.append(tx_hash)
+                except (ChainConfigError, ChainError) as e:
+                    print(f"Warning: On-chain revocation failed for grant {grant['grant_id']}: {e}")
+            
+            # Revoke in DB
+            success = await revoke_patient_file_grant(grant["grant_id"], granter_id)
+            if success:
+                revoked_count += 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            print(f"Warning: Failed to revoke grant {grant['grant_id']}: {e}")
+            failed_count += 1
+    
+    # Revoke the kfrag since all shares are revoked
+    kfrag_revoked = await revoke_patient_share_kfrag(granter_id, grantee_id)
+    
+    # Record in audit log
+    import json
+    try:
+        await create_audit_log(
+            event_type="patient_share_bulk_revoke",
+            actor_id=granter_id,
+            target_id=grantee_id,
+            patient_id=granter_id,
+            file_id=None,
+            cid=None,
+            details=json.dumps({
+                "revoked_count": revoked_count,
+                "failed_count": failed_count,
+                "kfrag_revoked": kfrag_revoked,
+                "action": "patient_file_shares_bulk_revoked",
+            }),
+            tx_hash=tx_hashes[0] if tx_hashes else None,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create bulk revoke audit log: {e}")
+    
+    return {
+        "revoked_count": revoked_count,
+        "failed_count": failed_count,
+        "tx_hashes": tx_hashes,
+        "kfrag_revoked": kfrag_revoked,
+        "message": f"Revoked {revoked_count} file shares" + (f" ({failed_count} failed)" if failed_count > 0 else ""),
     }
 
 
