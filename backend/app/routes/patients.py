@@ -131,13 +131,22 @@ class HospitalAccessEntry(BaseModel):
     """Information about a hospital's access to patient records."""
     hospital_id: int
     hospital_username: str
-    access_status: str  # "active", "revoked", "expired"
+    access_status: str  # "active", "revoked", "expired", "denied", "pending", "approved"
     granted_at: Optional[str] = None
     expires_at: Optional[str] = None
     revoked_at: Optional[str] = None
     file_count: int = 0
     tx_hash: Optional[str] = None
     on_chain_verified: bool = False
+    # Hospital profile info
+    hospital_name: Optional[str] = None
+    branch_name: Optional[str] = None
+    location: Optional[str] = None
+    specializations: Optional[str] = None
+    # Request info (for requests)
+    purpose: Optional[str] = None
+    requested_at: Optional[str] = None
+    event_type: Optional[str] = None  # "grant" or "request"
 
 
 class AvailableHospital(BaseModel):
@@ -510,7 +519,7 @@ async def revoke_hospital_kfrag(patient_id: int, hospital_id: int) -> bool:
 
 
 async def get_hospitals_for_patient(patient_id: int) -> list[dict]:
-    """Get all hospitals with access info for a patient."""
+    """Get all hospitals with access info for a patient, including profile info."""
     await ensure_hospital_access_table()
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -526,12 +535,18 @@ async def get_hospitals_for_patient(patient_id: int) -> list[dict]:
                 ha.revoked_at,
                 ha.tx_hash,
                 u.username as hospital_username,
+                -- Hospital profile info
+                up.hospital_name,
+                up.branch_name,
+                up.location,
+                up.specializations,
                 (SELECT COUNT(*) FROM audit_logs al 
                  WHERE al.event_type = 'upload' 
                  AND al.actor_id = ha.hospital_id 
                  AND al.patient_id = ?) as file_count
             FROM hospital_access ha
             JOIN users u ON ha.hospital_id = u.id
+            LEFT JOIN user_profiles up ON ha.hospital_id = up.user_id
             WHERE ha.patient_id = ?
             ORDER BY ha.granted_at DESC
             """,
@@ -539,6 +554,93 @@ async def get_hospitals_for_patient(patient_id: int) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def get_access_history_for_patient(patient_id: int) -> list[dict]:
+    """Get complete access history for a patient - ALL access-related events.
+    
+    Returns a combined list of:
+    - ALL access grants from hospital_access table (active, revoked, expired)
+    - ALL access requests from hospital_access_requests table (pending, approved, denied)
+    
+    This gives a complete audit trail of who requested access, when, and what happened.
+    """
+    await ensure_hospital_access_table()
+    await ensure_hospital_access_requests_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        # Get ALL access grants (active, revoked, expired) - these are approved requests that became grants
+        cursor1 = await db.execute(
+            """
+            SELECT 
+                ha.id,
+                ha.hospital_id,
+                ha.status as access_status,
+                ha.granted_at,
+                ha.expires_at,
+                ha.revoked_at,
+                ha.tx_hash,
+                u.username as hospital_username,
+                up.hospital_name,
+                up.branch_name,
+                up.location,
+                up.specializations,
+                NULL as purpose,
+                NULL as requested_at,
+                'grant' as event_type,
+                (SELECT COUNT(*) FROM audit_logs al 
+                 WHERE al.event_type = 'upload' 
+                 AND al.actor_id = ha.hospital_id 
+                 AND al.patient_id = ?) as file_count
+            FROM hospital_access ha
+            JOIN users u ON ha.hospital_id = u.id
+            LEFT JOIN user_profiles up ON ha.hospital_id = up.user_id
+            WHERE ha.patient_id = ?
+            """,
+            (patient_id, patient_id),
+        )
+        grants = await cursor1.fetchall()
+        
+        # Get ALL access requests (pending, approved, denied) - includes ones that haven't become grants yet
+        cursor2 = await db.execute(
+            """
+            SELECT 
+                har.id,
+                har.hospital_id,
+                har.status as access_status,
+                NULL as granted_at,
+                NULL as expires_at,
+                har.processed_at as revoked_at,
+                har.tx_hash,
+                u.username as hospital_username,
+                up.hospital_name,
+                up.branch_name,
+                up.location,
+                up.specializations,
+                har.purpose,
+                har.created_at as requested_at,
+                'request' as event_type,
+                0 as file_count
+            FROM hospital_access_requests har
+            JOIN users u ON har.hospital_id = u.id
+            LEFT JOIN user_profiles up ON har.hospital_id = up.user_id
+            WHERE har.patient_id = ?
+            """,
+            (patient_id,),
+        )
+        requests = await cursor2.fetchall()
+        
+        # Combine both lists
+        all_history = [dict(row) for row in grants] + [dict(row) for row in requests]
+        
+        # Sort by most recent activity (grant date, revoke date, or request date)
+        all_history.sort(
+            key=lambda x: x.get("granted_at") or x.get("revoked_at") or x.get("requested_at") or "",
+            reverse=True
+        )
+        return all_history
 
 
 async def get_all_hospitals() -> list[dict]:
@@ -835,6 +937,75 @@ async def list_patient_hospitals(
             file_count=h.get("file_count", 0),
             tx_hash=h.get("tx_hash"),
             on_chain_verified=on_chain_verified,
+            # Hospital profile info
+            hospital_name=h.get("hospital_name"),
+            branch_name=h.get("branch_name"),
+            location=h.get("location"),
+            specializations=h.get("specializations"),
+        ))
+    
+    return HospitalsListResponse(
+        patient_id=patient_id,
+        hospitals=hospital_entries,
+        count=len(hospital_entries),
+    )
+
+
+@router.get("/{patient_id}/access-history", response_model=HospitalsListResponse)
+async def get_patient_access_history(
+    patient_id: int,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get complete access history for a patient.
+    
+    Includes:
+    - All access grants (active, revoked, expired)
+    - All access requests (pending, approved, denied)
+    
+    This gives patients a full audit trail of all access-related activity.
+    
+    Args:
+        patient_id: Patient user ID
+        current_user: Authenticated user (must be the patient)
+        
+    Returns:
+        List of historical access events with hospital info
+    """
+    # Verify caller is the patient
+    if current_user["id"] != patient_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Can only view history for your own account",
+        )
+    
+    # Get complete history including denied requests
+    history = await get_access_history_for_patient(patient_id)
+    
+    # Build response
+    hospital_entries = []
+    for h in history:
+        on_chain_verified = False
+        if is_chain_configured() and h.get("tx_hash"):
+            on_chain_verified = True
+        
+        hospital_entries.append(HospitalAccessEntry(
+            hospital_id=h["hospital_id"],
+            hospital_username=h["hospital_username"],
+            access_status=h["access_status"],
+            granted_at=format_timestamp(h.get("granted_at")),
+            expires_at=format_timestamp(h.get("expires_at")),
+            revoked_at=format_timestamp(h.get("revoked_at")),
+            file_count=h.get("file_count", 0),
+            tx_hash=h.get("tx_hash"),
+            on_chain_verified=on_chain_verified,
+            hospital_name=h.get("hospital_name"),
+            branch_name=h.get("branch_name"),
+            location=h.get("location"),
+            specializations=h.get("specializations"),
+            purpose=h.get("purpose"),
+            requested_at=format_timestamp(h.get("requested_at")),
+            event_type=h.get("event_type"),
         ))
     
     return HospitalsListResponse(

@@ -610,7 +610,9 @@ export default function AuditPage() {
               </div>
             </div>
           ) : (
-            renderTabContent()
+            <div className="max-h-[60vh] overflow-y-auto">
+              {renderTabContent()}
+            </div>
           )}
         </div>
 

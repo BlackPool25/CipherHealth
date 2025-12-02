@@ -24,6 +24,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
 import {
   getPatientHospitals,
+  getPatientAccessHistory,
   revokeHospitalAccess,
   HospitalAccess,
   getPatientPendingRequests,
@@ -36,14 +37,350 @@ import KeyManager from '@/lib/KeyManager';
 
 type TabType = 'pending' | 'active' | 'history';
 
+// Collapsible Card Component for cleaner UI
+interface CollapsibleCardProps {
+  hospital: HospitalAccess | PendingHospitalRequest;
+  type: 'active' | 'pending' | 'history';
+  isExpanded: boolean;
+  onToggle: () => void;
+  onAction?: (action: string) => void;
+  isLoading?: boolean;
+  isConnected?: boolean;
+  isCorrectNetwork?: boolean;
+}
+
+function CollapsibleCard({ 
+  hospital, 
+  type, 
+  isExpanded, 
+  onToggle, 
+  onAction,
+  isLoading,
+  isConnected,
+  isCorrectNetwork
+}: CollapsibleCardProps) {
+  const isPending = type === 'pending';
+  const isActive = type === 'active';
+  const isHistory = type === 'history';
+  const h = hospital as HospitalAccess;
+  const p = hospital as PendingHospitalRequest;
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return 'bg-emerald-500';
+      case 'revoked': return 'bg-orange-500';
+      case 'expired': return 'bg-gray-400';
+      case 'denied': return 'bg-red-500';
+      case 'pending': return 'bg-amber-500';
+      case 'approved': return 'bg-blue-500';
+      default: return 'bg-gray-400';
+    }
+  };
+
+  const getStatusBgLight = (status: string) => {
+    switch (status) {
+      case 'active': return 'bg-emerald-50 border-emerald-200';
+      case 'revoked': return 'bg-orange-50 border-orange-200';
+      case 'expired': return 'bg-gray-50 border-gray-200';
+      case 'denied': return 'bg-red-50 border-red-200';
+      case 'pending': return 'bg-amber-50 border-amber-200';
+      default: return 'bg-gray-50 border-gray-200';
+    }
+  };
+
+  const formatDateShort = (dateStr: string | null) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
+
+  const formatDateFull = (dateStr: string | null) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const status = isPending ? 'pending' : h.access_status;
+  const hospitalName = isPending 
+    ? p.hospital_username 
+    : (h.hospital_name || h.hospital_username);
+  const branchInfo = !isPending && h.branch_name ? h.branch_name : null;
+  const locationInfo = !isPending && h.location ? h.location : null;
+
+  // Determine event type badge for history
+  // Check revoked_at field as fallback since status might not always be accurate
+  const isRevoked = !isPending && (status === 'revoked' || (h.revoked_at && status !== 'denied'));
+  
+  const getEventBadge = () => {
+    if (!isHistory) return null;
+    
+    // For grants: check if revoked first (revoked_at exists and not denied)
+    if (isRevoked) {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-100 text-orange-700">
+          ↩ Revoked
+        </span>
+      );
+    }
+    
+    // Denied requests
+    if (status === 'denied') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700">
+          ✗ Denied
+        </span>
+      );
+    }
+    
+    // Active grants
+    if (status === 'active' || (h.granted_at && !h.revoked_at)) {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
+          ✓ Approved
+        </span>
+      );
+    }
+    
+    // Pending requests
+    if (status === 'pending') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-700">
+          ⏳ Pending
+        </span>
+      );
+    }
+    
+    // Expired
+    if (status === 'expired') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+          ⏱ Expired
+        </span>
+      );
+    }
+    
+    return null;
+  };
+
+  return (
+    <div 
+      className={`border rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md cursor-pointer ${getStatusBgLight(status)}`}
+      onClick={onToggle}
+    >
+      {/* Main Card - Always visible with more info */}
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          {/* Left - Hospital info */}
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            {/* Status indicator */}
+            <div className={`w-10 h-10 rounded-lg ${getStatusColor(status)} flex items-center justify-center flex-shrink-0 text-white font-bold`}>
+              {hospitalName.charAt(0).toUpperCase()}
+            </div>
+            
+            {/* Hospital details */}
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-gray-900 truncate">{hospitalName}</h3>
+              
+              {/* Show branch/location in collapsed view for recognition */}
+              {(branchInfo || locationInfo) && (
+                <p className="text-sm text-gray-500 truncate">
+                  {branchInfo && <span>{branchInfo}</span>}
+                  {branchInfo && locationInfo && <span> • </span>}
+                  {locationInfo && <span>📍{locationInfo}</span>}
+                </p>
+              )}
+              
+              {/* Quick stats/info */}
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {/* Event type badge for history (Approved/Revoked/Denied) */}
+                {getEventBadge()}
+                
+                {/* Status badge for non-history */}
+                {!isHistory && (
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                    status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                    status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                    status === 'revoked' ? 'bg-orange-100 text-orange-700' :
+                    status === 'denied' ? 'bg-red-100 text-red-700' :
+                    status === 'expired' ? 'bg-gray-100 text-gray-600' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {status}
+                  </span>
+                )}
+                
+                {/* Files count for active/history */}
+                {!isPending && h.file_count > 0 && (
+                  <span className="text-xs text-indigo-600">📁 {h.file_count} files</span>
+                )}
+                
+                {/* Date info */}
+                {isPending && (
+                  <span className="text-xs text-gray-400">Requested {formatDateShort(p.created_at)}</span>
+                )}
+                {isActive && h.granted_at && (
+                  <span className="text-xs text-gray-400">Since {formatDateShort(h.granted_at)}</span>
+                )}
+                {isHistory && h.revoked_at && status === 'revoked' && (
+                  <span className="text-xs text-gray-400">{formatDateShort(h.revoked_at)}</span>
+                )}
+                {isHistory && h.revoked_at && status === 'denied' && (
+                  <span className="text-xs text-gray-400">{formatDateShort(h.revoked_at)}</span>
+                )}
+                {isHistory && h.granted_at && status === 'active' && (
+                  <span className="text-xs text-gray-400">{formatDateShort(h.granted_at)}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right - Action buttons (always visible) + expand */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Quick action buttons - visible even when collapsed */}
+            {onAction && isPending && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onAction('approve'); }}
+                  disabled={isLoading || !isConnected || !isCorrectNetwork}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isLoading ? '...' : '✓ Approve'}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onAction('deny'); }}
+                  disabled={isLoading}
+                  className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  ✗ Deny
+                </button>
+              </>
+            )}
+            
+            {onAction && isActive && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onAction('revoke'); }}
+                disabled={isLoading || !isConnected || !isCorrectNetwork}
+                className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <span className="flex items-center gap-1">
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-red-600" />
+                    ...
+                  </span>
+                ) : '↩ Revoke'}
+              </button>
+            )}
+            
+            {/* Expand/collapse indicator */}
+            <div className="p-2">
+              <svg 
+                className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        {/* Network warning inline */}
+        {onAction && (!isConnected || !isCorrectNetwork) && (isPending || isActive) && (
+          <p className="text-xs text-amber-600 mt-2">
+            ⚠️ Connect wallet to Sepolia to perform actions
+          </p>
+        )}
+      </div>
+
+      {/* Expanded Details - Smooth animation */}
+      <div 
+        className={`overflow-hidden transition-all duration-300 ease-in-out ${
+          isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div className="border-t border-gray-200 bg-white p-4" onClick={(e) => e.stopPropagation()}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            {/* Details column */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-gray-400 uppercase">Details</h4>
+              
+              {!isPending && h.hospital_name && (
+                <p><span className="text-gray-400">Username:</span> @{h.hospital_username}</p>
+              )}
+              {branchInfo && (
+                <p><span className="text-gray-400">Branch:</span> {branchInfo}</p>
+              )}
+              {locationInfo && (
+                <p><span className="text-gray-400">Location:</span> {locationInfo}</p>
+              )}
+              {!isPending && h.specializations && (
+                <p><span className="text-gray-400">Specializations:</span> {h.specializations}</p>
+              )}
+              {(isPending ? p.purpose : h.purpose) && (
+                <p><span className="text-gray-400">Purpose:</span> {isPending ? p.purpose : h.purpose}</p>
+              )}
+            </div>
+
+            {/* Timeline column */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-gray-400 uppercase">Timeline</h4>
+              
+              {isPending && (
+                <p><span className="text-gray-400">Requested:</span> {formatDateFull(p.created_at)}</p>
+              )}
+              {!isPending && h.requested_at && (
+                <p><span className="text-gray-400">Requested:</span> {formatDateFull(h.requested_at)}</p>
+              )}
+              {!isPending && h.granted_at && (
+                <p><span className="text-emerald-600">Granted:</span> {formatDateFull(h.granted_at)}</p>
+              )}
+              {!isPending && h.expires_at && (
+                <p>
+                  <span className={status === 'expired' ? 'text-amber-600' : 'text-gray-400'}>
+                    {status === 'expired' ? 'Expired:' : 'Expires:'}
+                  </span> {formatDateFull(h.expires_at)}
+                </p>
+              )}
+              {!isPending && h.revoked_at && (
+                <p>
+                  <span className={status === 'denied' ? 'text-red-600' : 'text-orange-600'}>
+                    {status === 'denied' ? 'Denied:' : 'Revoked:'}
+                  </span> {formatDateFull(h.revoked_at)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Transaction info */}
+          {!isPending && h.tx_hash && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <TxHashDisplay txHash={h.tx_hash} label="Transaction" />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function HospitalAccessPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { isConnected, isCorrectNetwork } = useWalletContext();
 
-  // State
-  const [activeTab, setActiveTab] = useState<TabType>('pending');
+  // State - Default to 'active' tab as most commonly used
+  const [activeTab, setActiveTab] = useState<TabType>('active');
   const [hospitals, setHospitals] = useState<HospitalAccess[]>([]);
+  const [historyHospitals, setHistoryHospitals] = useState<HospitalAccess[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingHospitalRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isApproving, setIsApproving] = useState<number | null>(null);
@@ -54,6 +391,9 @@ export default function HospitalAccessPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  
+  // Expanded card tracking
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
   
   // PRE kfrag generation state
   const [showPassphraseModal, setShowPassphraseModal] = useState<number | null>(null);
@@ -88,15 +428,21 @@ export default function HospitalAccessPage() {
     setIsLoading(true);
     setError('');
 
-    const [hospitalsResult, pendingResult] = await Promise.all([
+    const [hospitalsResult, historyResult, pendingResult] = await Promise.all([
       getPatientHospitals(user.id),
+      getPatientAccessHistory(user.id),
       getPatientPendingRequests(),
     ]);
 
     if (hospitalsResult.data) {
-      setHospitals(hospitalsResult.data.hospitals);
+      // Filter to only active hospitals
+      setHospitals(hospitalsResult.data.hospitals.filter(h => h.access_status === 'active'));
     } else if (hospitalsResult.error) {
       setError(hospitalsResult.error);
+    }
+
+    if (historyResult.data) {
+      setHistoryHospitals(historyResult.data.hospitals);
     }
 
     if (pendingResult.data) {
@@ -268,28 +614,21 @@ export default function HospitalAccessPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active':
-        return (
-          <span className="px-2 py-1 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
-            ✓ Active
-          </span>
-        );
-      case 'revoked':
-        return (
-          <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">
-            ✗ Revoked
-          </span>
-        );
-      case 'expired':
-        return (
-          <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
-            ⏱ Expired
-          </span>
-        );
-      default:
-        return null;
-    }
+    // Used only in modals now
+    const badges: Record<string, { bg: string; text: string; label: string }> = {
+      active: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: '✓ Active' },
+      revoked: { bg: 'bg-orange-100', text: 'text-orange-700', label: '↩ Revoked' },
+      expired: { bg: 'bg-gray-100', text: 'text-gray-700', label: '⏱ Expired' },
+      denied: { bg: 'bg-red-100', text: 'text-red-700', label: '✗ Denied' },
+      pending: { bg: 'bg-amber-100', text: 'text-amber-700', label: '⏳ Pending' },
+      approved: { bg: 'bg-blue-100', text: 'text-blue-700', label: '✓ Approved' },
+    };
+    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-700', label: status };
+    return (
+      <span className={`px-2 py-1 text-xs font-medium rounded-full ${badge.bg} ${badge.text}`}>
+        {badge.label}
+      </span>
+    );
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -313,8 +652,8 @@ export default function HospitalAccessPage() {
     );
   }
 
-  const activeHospitals = hospitals.filter(h => h.access_status === 'active');
-  const historyHospitals = hospitals.filter(h => h.access_status !== 'active');
+  // hospitals state already contains only active hospitals
+  // historyHospitals state contains revoked, expired, and denied
 
   return (
     <Layout>
@@ -349,274 +688,156 @@ export default function HospitalAccessPage() {
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="mb-6 border-b border-gray-200">
-          <nav className="flex gap-4">
+        {/* Tabs - Clean pill-style buttons */}
+        <div className="mb-6">
+          <div className="flex gap-2 p-1 bg-gray-100 rounded-xl w-fit">
             <button
-              onClick={() => setActiveTab('pending')}
-              className={`pb-3 px-1 font-medium text-sm relative ${
-                activeTab === 'pending'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
-                  : 'text-gray-500 hover:text-gray-700'
+              onClick={() => { setActiveTab('active'); setExpandedCard(null); }}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                activeTab === 'active'
+                  ? 'bg-white text-indigo-600 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              Pending Requests
-              {pendingRequests.length > 0 && (
-                <span className="ml-2 px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-700">
+              Active {hospitals.length > 0 && <span className="ml-1 text-xs">({hospitals.length})</span>}
+            </button>
+            <button
+              onClick={() => { setActiveTab('pending'); setExpandedCard(null); }}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                activeTab === 'pending'
+                  ? 'bg-white text-indigo-600 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Pending {pendingRequests.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs bg-amber-500 text-white rounded-full">
                   {pendingRequests.length}
                 </span>
               )}
             </button>
             <button
-              onClick={() => setActiveTab('active')}
-              className={`pb-3 px-1 font-medium text-sm relative ${
-                activeTab === 'active'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Active Access
-              {activeHospitals.length > 0 && (
-                <span className="ml-2 px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
-                  {activeHospitals.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`pb-3 px-1 font-medium text-sm ${
+              onClick={() => { setActiveTab('history'); setExpandedCard(null); }}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
                 activeTab === 'history'
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'bg-white text-indigo-600 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              History
+              History {historyHospitals.length > 0 && <span className="ml-1 text-xs">({historyHospitals.length})</span>}
             </button>
-          </nav>
+          </div>
         </div>
 
-        {/* Pending Requests Tab */}
-        {activeTab === 'pending' && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-xl font-semibold text-gray-900">Pending Access Requests</h2>
-              <p className="text-sm text-gray-500">
-                Hospitals requesting permission to upload records for you
-              </p>
-            </div>
-
-            {isLoading ? (
-              <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
-                <p className="text-gray-500 mt-2">Loading...</p>
-              </div>
-            ) : pendingRequests.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">📋</span>
-                </div>
-                <p className="text-gray-500">No pending access requests.</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  Hospitals will appear here when they request access to your records.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {pendingRequests.map((request) => (
-                  <div key={request.id} className="p-4 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
-                          <span className="text-xl">🏥</span>
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{request.hospital_username}</h3>
-                          <p className="text-sm text-gray-600 mt-1">
-                            <strong>Purpose:</strong> {request.purpose}
-                          </p>
-                          <p className="text-xs text-gray-400 mt-1">
-                            Requested: {formatDate(request.created_at)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setShowApproveModal(request.id)}
-                          disabled={isApproving === request.id || !isConnected || !isCorrectNetwork}
-                          className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isApproving === request.id ? (
-                            <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                              Approving...
-                            </span>
-                          ) : (
-                            '✓ Approve'
-                          )}
-                        </button>
-                        <button
-                          onClick={() => handleDeny(request.id)}
-                          disabled={isDenying === request.id}
-                          className="px-4 py-2 text-sm font-medium text-red-600 hover:text-white hover:bg-red-600 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isDenying === request.id ? (
-                            <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                              Denying...
-                            </span>
-                          ) : (
-                            '✗ Deny'
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {(!isConnected || !isCorrectNetwork) && pendingRequests.length > 0 && (
-              <div className="p-4 bg-amber-50 border-t border-amber-100">
-                <p className="text-sm text-amber-600">
-                  ⚠️ Connect wallet to Sepolia network to approve requests
-                </p>
-              </div>
-            )}
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+            <p className="text-gray-500 ml-3">Loading...</p>
           </div>
         )}
 
-        {/* Active Access Tab */}
-        {activeTab === 'active' && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-xl font-semibold text-gray-900">Active Hospital Access</h2>
-              <p className="text-sm text-gray-500">
-                Hospitals currently authorized to upload records for you
-              </p>
-            </div>
-
-            {isLoading ? (
-              <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
-                <p className="text-gray-500 mt-2">Loading...</p>
-              </div>
-            ) : activeHospitals.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">🏥</span>
-                </div>
-                <p className="text-gray-500">No hospitals have access to your records yet.</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  Approve pending requests to grant hospitals access.
-                </p>
+        {/* Active Tab - Collapsible Cards */}
+        {!isLoading && activeTab === 'active' && (
+          <div>
+            <p className="text-sm text-gray-500 mb-4">
+              Hospitals currently authorized to upload records for you
+            </p>
+            
+            {hospitals.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl">
+                <span className="text-4xl">🏥</span>
+                <p className="text-gray-500 mt-4">No hospitals have access yet</p>
+                <p className="text-sm text-gray-400">Approve pending requests to grant access</p>
               </div>
             ) : (
-              <div className="divide-y divide-gray-100">
-                {activeHospitals.map((hospital) => (
-                  <div key={hospital.hospital_id} className="p-4 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
-                          <span className="text-xl">🏥</span>
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{hospital.hospital_username}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            {getStatusBadge(hospital.access_status)}
-                            {hospital.on_chain_verified && (
-                              <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
-                                ⛓ On-chain
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right text-sm">
-                          <p className="text-gray-500">Granted: {formatDate(hospital.granted_at)}</p>
-                          {hospital.expires_at && (
-                            <p className="text-amber-600">Expires: {formatDate(hospital.expires_at)}</p>
-                          )}
-                          <p className="text-gray-400">{hospital.file_count} files uploaded</p>
-                        </div>
-                        <button
-                          onClick={() => handleRevoke(hospital.hospital_id)}
-                          disabled={isRevoking === hospital.hospital_id || !isConnected || !isCorrectNetwork}
-                          className="px-4 py-2 text-sm font-medium text-red-600 hover:text-white hover:bg-red-600 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isRevoking === hospital.hospital_id ? (
-                            <span className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                              Revoking...
-                            </span>
-                          ) : (
-                            'Revoke Access'
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    {hospital.tx_hash && (
-                      <div className="mt-2 ml-16">
-                        <TxHashDisplay txHash={hospital.tx_hash} label="Grant TX" />
-                      </div>
+              <div className="space-y-3">
+                {hospitals.map((hospital) => (
+                  <CollapsibleCard
+                    key={`active-${hospital.hospital_id}`}
+                    hospital={hospital}
+                    type="active"
+                    isExpanded={expandedCard === `active-${hospital.hospital_id}`}
+                    onToggle={() => setExpandedCard(
+                      expandedCard === `active-${hospital.hospital_id}` ? null : `active-${hospital.hospital_id}`
                     )}
-                  </div>
+                    onAction={(action) => {
+                      if (action === 'revoke') handleRevoke(hospital.hospital_id);
+                    }}
+                    isLoading={isRevoking === hospital.hospital_id}
+                    isConnected={isConnected}
+                    isCorrectNetwork={isCorrectNetwork}
+                  />
                 ))}
               </div>
             )}
           </div>
         )}
 
-        {/* History Tab */}
-        {activeTab === 'history' && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-xl font-semibold text-gray-900">Access History</h2>
-              <p className="text-sm text-gray-500">
-                Previous grants that have been revoked or expired
-              </p>
-            </div>
-
-            {isLoading ? (
-              <div className="p-8 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
-                <p className="text-gray-500 mt-2">Loading...</p>
-              </div>
-            ) : historyHospitals.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">📜</span>
-                </div>
-                <p className="text-gray-500">No access history yet.</p>
+        {/* Pending Tab - Collapsible Cards */}
+        {!isLoading && activeTab === 'pending' && (
+          <div>
+            <p className="text-sm text-gray-500 mb-4">
+              Hospitals requesting permission to upload records for you
+            </p>
+            
+            {pendingRequests.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl">
+                <span className="text-4xl">📋</span>
+                <p className="text-gray-500 mt-4">No pending requests</p>
+                <p className="text-sm text-gray-400">Hospitals will appear here when they request access</p>
               </div>
             ) : (
-              <div className="divide-y divide-gray-100">
-                {historyHospitals.map((hospital) => (
-                  <div key={hospital.hospital_id} className="p-4 opacity-60">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center">
-                          <span className="text-lg">🏥</span>
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-gray-700">{hospital.hospital_username}</h3>
-                          {getStatusBadge(hospital.access_status)}
-                        </div>
-                      </div>
-                      <div className="text-right text-sm text-gray-500">
-                        <p>Granted: {formatDate(hospital.granted_at)}</p>
-                        {hospital.revoked_at && (
-                          <p className="text-rose-600">Revoked: {formatDate(hospital.revoked_at)}</p>
-                        )}
-                        {hospital.expires_at && hospital.access_status === 'expired' && (
-                          <p className="text-amber-600">Expired: {formatDate(hospital.expires_at)}</p>
-                        )}
-                        {hospital.tx_hash && (
-                          <TxHashDisplay txHash={hospital.tx_hash} />
-                        )}
-                      </div>
-                    </div>
-                  </div>
+              <div className="space-y-3">
+                {pendingRequests.map((request) => (
+                  <CollapsibleCard
+                    key={`pending-${request.id}`}
+                    hospital={request}
+                    type="pending"
+                    isExpanded={expandedCard === `pending-${request.id}`}
+                    onToggle={() => setExpandedCard(
+                      expandedCard === `pending-${request.id}` ? null : `pending-${request.id}`
+                    )}
+                    onAction={(action) => {
+                      if (action === 'approve') setShowApproveModal(request.id);
+                      if (action === 'deny') handleDeny(request.id);
+                    }}
+                    isLoading={isApproving === request.id || isDenying === request.id}
+                    isConnected={isConnected}
+                    isCorrectNetwork={isCorrectNetwork}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* History Tab - Collapsible Cards with scroll */}
+        {!isLoading && activeTab === 'history' && (
+          <div>
+            <p className="text-sm text-gray-500 mb-4">
+              Full timeline of all access requests, grants, revocations, and denials
+            </p>
+            
+            {historyHospitals.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl">
+                <span className="text-4xl">📜</span>
+                <p className="text-gray-500 mt-4">No access history yet</p>
+                <p className="text-sm text-gray-400">All access events will appear here</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-2">
+                {historyHospitals.map((hospital, index) => (
+                  <CollapsibleCard
+                    key={`history-${hospital.hospital_id}-${hospital.event_type || 'grant'}-${index}`}
+                    hospital={hospital}
+                    type="history"
+                    isExpanded={expandedCard === `history-${hospital.hospital_id}-${index}`}
+                    onToggle={() => setExpandedCard(
+                      expandedCard === `history-${hospital.hospital_id}-${index}` 
+                        ? null 
+                        : `history-${hospital.hospital_id}-${index}`
+                    )}
+                  />
                 ))}
               </div>
             )}
