@@ -564,6 +564,7 @@ async def get_access_history_for_patient(patient_id: int) -> list[dict]:
     - ALL access requests from hospital_access_requests table (pending, approved, denied)
     
     This gives a complete audit trail of who requested access, when, and what happened.
+    Includes withdrawn_by_hospital flag for hospital-initiated withdrawals.
     """
     await ensure_hospital_access_table()
     await ensure_hospital_access_requests_table()
@@ -572,6 +573,7 @@ async def get_access_history_for_patient(patient_id: int) -> list[dict]:
         db.row_factory = aiosqlite.Row
         
         # Get ALL access grants (active, revoked, expired) - these are approved requests that became grants
+        # Also check if revocation was a hospital withdrawal via audit_logs
         cursor1 = await db.execute(
             """
             SELECT 
@@ -593,13 +595,19 @@ async def get_access_history_for_patient(patient_id: int) -> list[dict]:
                 (SELECT COUNT(*) FROM audit_logs al 
                  WHERE al.event_type = 'upload' 
                  AND al.actor_id = ha.hospital_id 
-                 AND al.patient_id = ?) as file_count
+                 AND al.patient_id = ?) as file_count,
+                -- Check if this was a hospital-initiated withdrawal
+                (SELECT 1 FROM audit_logs al 
+                 WHERE al.event_type = 'withdraw' 
+                 AND al.actor_id = ha.hospital_id 
+                 AND al.patient_id = ?
+                 LIMIT 1) as withdrawn_by_hospital
             FROM hospital_access ha
             JOIN users u ON ha.hospital_id = u.id
             LEFT JOIN user_profiles up ON ha.hospital_id = up.user_id
             WHERE ha.patient_id = ?
             """,
-            (patient_id, patient_id),
+            (patient_id, patient_id, patient_id),
         )
         grants = await cursor1.fetchall()
         
@@ -1326,6 +1334,164 @@ async def revoke_hospital_access_endpoint(
         "kfrag_revoked": kfrag_revoked,
         "message": "Hospital access revoked (recorded on-chain)",
     }
+
+
+# ============================================================================
+# Hospital Voluntary Access Withdrawal
+# ============================================================================
+
+class HospitalWithdrawAccessRequest(BaseModel):
+    """Request for a hospital to voluntarily withdraw their access to a patient."""
+    patient_id: int  # Patient ID to withdraw access from
+    passphrase: str  # Hospital's passphrase for verification
+
+
+class HospitalWithdrawAccessResponse(BaseModel):
+    """Response for hospital withdrawal."""
+    hospital_id: int
+    patient_id: int
+    status: str
+    tx_hash: Optional[str] = None
+    etherscan_url: Optional[str] = None
+    kfrag_revoked: bool = False
+    message: str
+
+
+@router.post("/hospital/withdraw-access", response_model=HospitalWithdrawAccessResponse)
+async def hospital_withdraw_access(
+    request: HospitalWithdrawAccessRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Hospital voluntarily withdraws their access to a patient's records.
+    
+    This allows hospitals to proactively give up access when no longer needed,
+    without waiting for the patient to revoke or the grant to expire.
+    
+    Requires the hospital's passphrase for verification to prevent accidental
+    or unauthorized withdrawals.
+    
+    This:
+    1. Verifies hospital's passphrase
+    2. Records the withdrawal ON-CHAIN (using the same revocation mechanism)
+    3. Updates the hospital_access table
+    4. Revokes the kfrag (hospital can no longer decrypt patient files)
+    
+    Args:
+        request: Withdrawal request with patient_id and passphrase
+        current_user: Authenticated hospital user
+        
+    Returns:
+        Withdrawal confirmation with on-chain transaction hash
+        
+    Raises:
+        HTTPException 403: If current user is not a hospital
+        HTTPException 401: If passphrase is incorrect
+        HTTPException 404: If no active access found
+    """
+    from argon2 import PasswordHasher
+    from argon2.exceptions import VerifyMismatchError
+    
+    ph = PasswordHasher()
+    hospital_id = current_user["id"]
+    patient_id = request.patient_id
+    
+    # Verify caller is a hospital
+    if current_user.get("role") != "hospital":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only hospitals can withdraw access",
+        )
+    
+    # Verify hospital's passphrase
+    if not current_user.get("password_hash"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No password set for this account",
+        )
+    
+    try:
+        ph.verify(current_user["password_hash"], request.passphrase)
+    except VerifyMismatchError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid passphrase. Please verify your passphrase to withdraw access.",
+        )
+    
+    # Get the stored grant record
+    access_record = await get_hospital_access_record(patient_id, hospital_id)
+    if not access_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active access grant found for this patient",
+        )
+    
+    stored_cid_hash = access_record.get("grant_cid_hash")
+    patient_identifier = access_record.get("patient_identifier")
+    hospital_identifier = access_record.get("hospital_identifier")
+    
+    tx_hash = None
+    etherscan_url = None
+    
+    # Record on-chain if chain is configured and we have the required info
+    if is_chain_configured() and stored_cid_hash:
+        try:
+            tx_hash = await revoke_hospital_access_onchain(
+                stored_cid_hash=stored_cid_hash,
+                patient_identifier=patient_identifier,
+                hospital_identifier=hospital_identifier,
+            )
+            etherscan_url = get_etherscan_url(tx_hash)
+        except ChainConfigError as e:
+            # Log but don't fail - proceed with DB update
+            print(f"Warning: Chain config error during withdrawal: {e}")
+        except ChainError as e:
+            # Log but don't fail - proceed with DB update
+            print(f"Warning: Chain error during withdrawal: {e}")
+    
+    # Update DB - mark access as revoked
+    success = await revoke_hospital_access(patient_id, hospital_id)
+    
+    # Revoke the kfrag - critical for security
+    kfrag_revoked = await revoke_hospital_kfrag(patient_id, hospital_id)
+    
+    # Get patient details for audit log
+    patient = await get_user_by_id(patient_id)
+    patient_name = patient.get("username") if patient else f"patient_{patient_id}"
+    
+    # Record withdrawal in audit log
+    import json
+    try:
+        await create_audit_log(
+            event_type="withdraw",
+            actor_id=hospital_id,
+            target_id=patient_id,
+            patient_id=patient_id,
+            file_id=None,
+            cid=None,
+            details=json.dumps({
+                "patient_name": patient_name,
+                "patient_id": patient_id,
+                "hospital_name": current_user.get("username"),
+                "hospital_id": hospital_id,
+                "kfrag_revoked": kfrag_revoked,
+                "action": "hospital_access_withdrawn",
+                "initiated_by": "hospital",
+            }),
+            tx_hash=tx_hash,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create withdrawal audit log: {e}")
+    
+    return HospitalWithdrawAccessResponse(
+        hospital_id=hospital_id,
+        patient_id=patient_id,
+        status="withdrawn",
+        tx_hash=tx_hash,
+        etherscan_url=etherscan_url,
+        kfrag_revoked=kfrag_revoked,
+        message="Access successfully withdrawn. You can no longer view this patient's records.",
+    )
 
 
 # ============================================================================
@@ -2182,7 +2348,8 @@ async def get_patient_files_for_hospital(
                 encrypted_cek,
                 tx_hash,
                 created_at,
-                category
+                category,
+                description
             FROM files
             WHERE owner_id = ?
             ORDER BY created_at DESC

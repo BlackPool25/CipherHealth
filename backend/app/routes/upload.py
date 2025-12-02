@@ -663,7 +663,6 @@ async def hospital_upload(
         
         # Record hospital upload in audit log
         try:
-            import json
             await create_audit_log(
                 event_type="upload",
                 actor_id=hospital_id,
@@ -811,7 +810,6 @@ async def hospital_upload_ciphertext(
     
     # Record hospital ciphertext upload in audit log
     try:
-        import json
         await create_audit_log(
             event_type="upload",
             actor_id=hospital_id,

@@ -50,11 +50,14 @@ MAX_BACKOFF = 10  # seconds
 REQUEST_TIMEOUT = 60  # seconds
 
 # Default gateway URL for downloads
+# NOTE: storacha.link is primary gateway - it may redirect but usually works well
+# If it fails, we fall back to other gateways
 DEFAULT_GATEWAY_URL = "https://storacha.link"
 
 # Fallback gateways when primary fails (in order of preference)
 FALLBACK_GATEWAYS = [
-    "https://ipfs.io",           # Protocol Labs gateway
+    "https://w3s.link",          # Web3.storage gateway (fast, reliable)
+    "https://ipfs.io",           # Protocol Labs gateway (very reliable)
     "https://dweb.link",         # Protocol Labs dweb gateway
     "https://cloudflare-ipfs.com",  # Cloudflare gateway
 ]
@@ -398,6 +401,8 @@ def download_blob(cid: str) -> bytes:
         
         for attempt in range(MAX_RETRIES):
             try:
+                # Allow redirects - storacha.link often redirects legitimately
+                # Only fail if the final response is bad
                 response = requests.get(
                     url,
                     timeout=REQUEST_TIMEOUT,
@@ -405,13 +410,8 @@ def download_blob(cid: str) -> bytes:
                         "Accept": "*/*",
                         "User-Agent": "StorachaClient/1.0"
                     },
-                    allow_redirects=False,  # Don't follow redirects to broken subdomain URLs
+                    allow_redirects=True,  # Follow redirects - they often work
                 )
-                
-                # If we get a redirect, try the next gateway instead
-                if response.status_code in (301, 302, 307, 308):
-                    logger.warning(f"Gateway {host} redirected, trying next gateway...")
-                    break  # Try next gateway
                 
                 if response.status_code == 200:
                     data = response.content
@@ -427,6 +427,10 @@ def download_blob(cid: str) -> bytes:
                     raise StorachaDownloadError(
                         f"Rate limited by gateway. Status: {response.status_code}"
                     )
+                elif response.status_code == 504 or response.status_code == 502:
+                    # Gateway timeout/bad gateway - try next gateway
+                    logger.warning(f"Gateway {host} returned {response.status_code}, trying next gateway...")
+                    break  # Try next gateway
                 else:
                     raise StorachaDownloadError(
                         f"Gateway returned status {response.status_code}: "

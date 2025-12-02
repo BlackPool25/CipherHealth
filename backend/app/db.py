@@ -1494,7 +1494,8 @@ async def get_access_events_for_patient(patient_id: int) -> list[dict]:
 
 async def get_revoke_events_for_patient(patient_id: int) -> list[dict]:
     """
-    Get all revoke events for a patient.
+    Get all revoke and withdraw events for a patient.
+    Includes both patient-initiated revokes and hospital-initiated withdrawals.
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -1508,7 +1509,7 @@ async def get_revoke_events_for_patient(patient_id: int) -> list[dict]:
             LEFT JOIN users u1 ON al.actor_id = u1.id
             LEFT JOIN users u2 ON al.target_id = u2.id
             LEFT JOIN files f ON al.file_id = f.id
-            WHERE al.patient_id = ? AND al.event_type = 'revoke'
+            WHERE al.patient_id = ? AND al.event_type IN ('revoke', 'withdraw')
             ORDER BY al.created_at DESC
             """,
             (patient_id,),
@@ -1559,6 +1560,31 @@ async def get_hospital_access_events(hospital_id: int) -> list[dict]:
             LEFT JOIN users p ON al.patient_id = p.id
             LEFT JOIN files f ON al.file_id = f.id
             WHERE al.actor_id = ? AND al.event_type = 'access'
+            ORDER BY al.created_at DESC
+            """,
+            (hospital_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_hospital_withdraw_events(hospital_id: int) -> list[dict]:
+    """
+    Get all withdraw events initiated by a hospital.
+    Shows when the hospital voluntarily withdrew access from patients.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT al.*, 
+                   p.username as patient_name,
+                   f.filename,
+                   f.cid
+            FROM audit_logs al
+            LEFT JOIN users p ON al.patient_id = p.id
+            LEFT JOIN files f ON al.file_id = f.id
+            WHERE al.actor_id = ? AND al.event_type = 'withdraw'
             ORDER BY al.created_at DESC
             """,
             (hospital_id,),

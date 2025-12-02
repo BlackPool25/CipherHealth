@@ -65,10 +65,12 @@ function CollapsibleCard({
   const h = hospital as HospitalAccess;
   const p = hospital as PendingHospitalRequest;
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string, isWithdrawnByHospital?: boolean | number | null) => {
+    if (isWithdrawnByHospital) return 'bg-blue-500';
     switch (status) {
       case 'active': return 'bg-emerald-500';
       case 'revoked': return 'bg-orange-500';
+      case 'withdrawn': return 'bg-blue-500';
       case 'expired': return 'bg-gray-400';
       case 'denied': return 'bg-red-500';
       case 'pending': return 'bg-amber-500';
@@ -77,10 +79,12 @@ function CollapsibleCard({
     }
   };
 
-  const getStatusBgLight = (status: string) => {
+  const getStatusBgLight = (status: string, isWithdrawnByHospital?: boolean | number | null) => {
+    if (isWithdrawnByHospital) return 'bg-blue-50 border-blue-200';
     switch (status) {
       case 'active': return 'bg-emerald-50 border-emerald-200';
       case 'revoked': return 'bg-orange-50 border-orange-200';
+      case 'withdrawn': return 'bg-blue-50 border-blue-200';
       case 'expired': return 'bg-gray-50 border-gray-200';
       case 'denied': return 'bg-red-50 border-red-200';
       case 'pending': return 'bg-amber-50 border-amber-200';
@@ -116,11 +120,22 @@ function CollapsibleCard({
   const locationInfo = !isPending && h.location ? h.location : null;
 
   // Determine event type badge for history
+  // Check if this was a hospital-initiated withdrawal
+  const isWithdrawn = !isPending && h.withdrawn_by_hospital;
   // Check revoked_at field as fallback since status might not always be accurate
-  const isRevoked = !isPending && (status === 'revoked' || (h.revoked_at && status !== 'denied'));
+  const isRevoked = !isPending && !isWithdrawn && (status === 'revoked' || (h.revoked_at && status !== 'denied'));
   
   const getEventBadge = () => {
     if (!isHistory) return null;
+    
+    // Hospital withdrew access
+    if (isWithdrawn) {
+      return (
+        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
+          🏥 Withdrawn by Hospital
+        </span>
+      );
+    }
     
     // For grants: check if revoked first (revoked_at exists and not denied)
     if (isRevoked) {
@@ -172,7 +187,7 @@ function CollapsibleCard({
 
   return (
     <div 
-      className={`border rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md cursor-pointer ${getStatusBgLight(status)}`}
+      className={`border rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md cursor-pointer ${getStatusBgLight(status, h.withdrawn_by_hospital)}`}
       onClick={onToggle}
     >
       {/* Main Card - Always visible with more info */}
@@ -181,7 +196,7 @@ function CollapsibleCard({
           {/* Left - Hospital info */}
           <div className="flex items-start gap-3 flex-1 min-w-0">
             {/* Status indicator */}
-            <div className={`w-10 h-10 rounded-lg ${getStatusColor(status)} flex items-center justify-center flex-shrink-0 text-white font-bold`}>
+            <div className={`w-10 h-10 rounded-lg ${getStatusColor(status, h.withdrawn_by_hospital)} flex items-center justify-center flex-shrink-0 text-white font-bold`}>
               {hospitalName.charAt(0).toUpperCase()}
             </div>
             

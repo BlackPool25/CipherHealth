@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getMyAuditLogs, CategorizedAuditResponse, getAuditLogs } from '@/lib/api';
 
 // Tab types
-type TabType = 'activity' | 'grants' | 'access' | 'revokes';
+type TabType = 'activity' | 'grants' | 'access' | 'revokes' | 'withdraws';
 
 interface AuditEntry {
   id: number;
@@ -102,6 +102,17 @@ const formatDetails = (details: string | Record<string, any> | undefined, eventT
   if (details.auto_grant && details.grant_reason === 'hospital_upload') {
     parts.push('(auto-granted on upload)');
   }
+  // For withdrawals, show who withdrew
+  if (details.action === 'hospital_access_withdrawn') {
+    if (details.initiated_by === 'hospital') {
+      parts.push('Hospital voluntarily withdrew access');
+    }
+    if (details.patient_name) parts.push(`Patient: ${details.patient_name}`);
+  }
+  // For revokes initiated by patient
+  if (details.action === 'hospital_access_revoked') {
+    if (details.hospital_name) parts.push(`Hospital: ${details.hospital_name}`);
+  }
   
   return parts.length > 0 ? parts.join(' • ') : '';
 };
@@ -128,6 +139,7 @@ const getEventIcon = (eventType: string | undefined) => {
     grant: { icon: '✅', bg: 'bg-emerald-50', text: 'text-emerald-600' },
     upload: { icon: '📤', bg: 'bg-purple-50', text: 'text-purple-600' },
     revoke: { icon: '🚫', bg: 'bg-red-50', text: 'text-red-600' },
+    withdraw: { icon: '🏥', bg: 'bg-blue-50', text: 'text-blue-600' },
     access_granted: { icon: '🔓', bg: 'bg-green-50', text: 'text-green-600' },
   };
   return icons[eventType?.toLowerCase() || ''] || { icon: '📋', bg: 'bg-gray-50', text: 'text-gray-600' };
@@ -142,6 +154,7 @@ export default function AuditPage() {
   const [grants, setGrants] = useState<GrantEntry[]>([]);
   const [accessEvents, setAccessEvents] = useState<AccessEntry[]>([]);
   const [revokes, setRevokes] = useState<RevokeEntry[]>([]);
+  const [withdraws, setWithdraws] = useState<RevokeEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -151,6 +164,7 @@ export default function AuditPage() {
     grants: 0,
     access: 0,
     revokes: 0,
+    withdraws: 0,
   });
 
   useEffect(() => {
@@ -172,12 +186,26 @@ export default function AuditPage() {
         setAllLogs(result.data.all_logs || []);
         setGrants(result.data.grants || []);
         setAccessEvents(result.data.access_events || []);
-        setRevokes(result.data.revokes || []);
+        
+        // Separate revokes into patient revokes and hospital withdraws
+        const allRevokes = result.data.revokes || [];
+        const patientRevokes = allRevokes.filter((r: RevokeEntry) => {
+          const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
+          return !details.withdrawn_by_hospital && !details.event_subtype?.includes('withdraw');
+        });
+        const hospitalWithdraws = allRevokes.filter((r: RevokeEntry) => {
+          const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
+          return details.withdrawn_by_hospital || details.event_subtype?.includes('withdraw');
+        });
+        
+        setRevokes(patientRevokes);
+        setWithdraws(hospitalWithdraws);
         setStats({
           total: result.data.total_count || 0,
           grants: result.data.grants_count || 0,
           access: result.data.access_count || 0,
-          revokes: result.data.revokes_count || 0,
+          revokes: patientRevokes.length,
+          withdraws: hospitalWithdraws.length,
         });
       } else if (result.error) {
         console.error('Failed to load audit logs:', result.error);
@@ -194,6 +222,7 @@ export default function AuditPage() {
             grants: 0,
             access: 0,
             revokes: 0,
+            withdraws: 0,
           });
         }
       } catch (fallbackError) {
@@ -235,6 +264,7 @@ export default function AuditPage() {
     { value: 'grants', label: 'Grants', icon: '✅', count: stats.grants },
     { value: 'access', label: 'Access Events', icon: '👁️', count: stats.access },
     { value: 'revokes', label: 'Revokes', icon: '🚫', count: stats.revokes },
+    { value: 'withdraws', label: 'Withdraws', icon: '🏥', count: stats.withdraws },
   ];
 
   const renderBlockchainBadge = (tx_hash?: string, block_number?: number) => {
@@ -460,7 +490,7 @@ export default function AuditPage() {
   const renderRevokesTab = () => {
     const filtered = filterEntries(revokes);
     if (filtered.length === 0) {
-      return renderEmptyState('No revocations', 'Access revocations will appear here');
+      return renderEmptyState('No revocations', 'Patient-initiated access revocations will appear here');
     }
     
     return (
@@ -509,6 +539,66 @@ export default function AuditPage() {
     );
   };
 
+  const renderWithdrawsTab = () => {
+    const filtered = filterEntries(withdraws);
+    if (filtered.length === 0) {
+      return renderEmptyState('No withdrawals', 'Hospital-initiated access withdrawals will appear here');
+    }
+    
+    return (
+      <div className="divide-y divide-gray-100">
+        {filtered.map((withdraw) => (
+          <div key={withdraw.id} className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors">
+            <div className="bg-blue-50 w-12 h-12 rounded-xl flex items-center justify-center border border-gray-100 flex-shrink-0">
+              <span className="text-xl">🏥</span>
+            </div>
+            
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                  Hospital Withdrawal
+                </span>
+                {withdraw.verified_onchain && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                    ⛓️ On-Chain
+                  </span>
+                )}
+                {withdraw.timestamp && (
+                  <span className="text-sm text-gray-500">{formatTimeAgo(withdraw.timestamp)}</span>
+                )}
+              </div>
+              
+              <p className="text-gray-900 font-medium">
+                Hospital voluntarily withdrew access
+                {withdraw.actor_name && (
+                  <span className="text-blue-600"> ({withdraw.actor_name})</span>
+                )}
+              </p>
+              
+              {withdraw.target_name && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Patient: {withdraw.target_name}
+                </p>
+              )}
+              
+              {withdraw.filename && (
+                <p className="text-sm text-gray-600 mt-1">📄 {withdraw.filename}</p>
+              )}
+              
+              {renderBlockchainBadge(withdraw.tx_hash)}
+            </div>
+            
+            {withdraw.timestamp && (
+              <div className="text-right text-sm text-gray-500 flex-shrink-0">
+                {new Date(withdraw.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderEmptyState = (title: string, message: string) => (
     <div className="p-12 text-center">
       <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
@@ -531,6 +621,8 @@ export default function AuditPage() {
         return renderAccessTab();
       case 'revokes':
         return renderRevokesTab();
+      case 'withdraws':
+        return renderWithdrawsTab();
       default:
         return renderActivityTab();
     }
@@ -617,12 +709,13 @@ export default function AuditPage() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">
           {[
             { label: 'Total Events', count: stats.total, color: 'indigo', icon: '📋' },
             { label: 'Active Grants', count: grants.filter(g => g.status === 'active' && !g.is_expired).length, color: 'emerald', icon: '✅' },
             { label: 'Access Events', count: stats.access, color: 'sky', icon: '👁️' },
             { label: 'Revocations', count: stats.revokes, color: 'red', icon: '🚫' },
+            { label: 'Withdrawals', count: stats.withdraws, color: 'blue', icon: '🏥' },
           ].map((stat) => (
             <div key={stat.label} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border border-gray-100 p-4 text-center">
               <div className="text-2xl mb-1">{stat.icon}</div>

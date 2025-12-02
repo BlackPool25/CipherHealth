@@ -46,8 +46,29 @@ export default function UploadPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('General');
   const categories = ['General', 'Lab Results', 'Imaging', 'Prescriptions', 'Referrals', 'Reports', 'Other'];
   
-  // Custom display name (optional rename)
+  // Custom display name (optional rename) - stores only the base name, extension is preserved separately
   const [displayName, setDisplayName] = useState<string>('');
+
+  // Helper function to extract file extension
+  const getFileExtension = (filename: string): string => {
+    const lastDot = filename.lastIndexOf('.');
+    if (lastDot === -1 || lastDot === 0) return '';
+    return filename.substring(lastDot);
+  };
+
+  // Helper function to get base name without extension
+  const getBaseName = (filename: string): string => {
+    const lastDot = filename.lastIndexOf('.');
+    if (lastDot === -1 || lastDot === 0) return filename;
+    return filename.substring(0, lastDot);
+  };
+
+  // Combine display name with original extension
+  const getFinalDisplayName = (): string | undefined => {
+    if (!selectedFile || !displayName.trim()) return undefined;
+    const extension = getFileExtension(selectedFile.name);
+    return displayName.trim() + extension;
+  };
   
   // Description field
   const [description, setDescription] = useState<string>('');
@@ -172,13 +193,14 @@ export default function UploadPage() {
       setUploadProgress({ stage: 'uploading', progress: 50, message: 'Uploading to decentralized storage...' });
       
       // Upload for the selected patient using hospital upload endpoint
+      // getFinalDisplayName() ensures the original file extension is preserved
       const response = await hospitalUploadFile(
         selectedFile, 
         selectedPatientUuid, 
         selectedCategory,
         description || undefined, // description
         undefined, // folder
-        displayName || undefined // custom display name
+        getFinalDisplayName() // custom display name with original extension preserved
       );
 
       if (response.error) {
@@ -522,15 +544,20 @@ export default function UploadPage() {
                   <label className="block text-sm font-medium text-amber-800 mb-2">
                     ✏️ Rename File <span className="text-amber-600 font-normal">(optional)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder={selectedFile.name}
-                    className="w-full p-3 border-2 border-amber-300 rounded-xl focus:border-amber-500 focus:outline-none bg-white text-gray-900 placeholder-gray-400"
-                  />
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      placeholder={getBaseName(selectedFile.name)}
+                      className="flex-1 p-3 border-2 border-amber-300 rounded-l-xl focus:border-amber-500 focus:outline-none bg-white text-gray-900 placeholder-gray-400"
+                    />
+                    <span className="px-3 py-3 bg-amber-100 border-2 border-l-0 border-amber-300 rounded-r-xl text-amber-800 font-mono text-sm">
+                      {getFileExtension(selectedFile.name) || '(no ext)'}
+                    </span>
+                  </div>
                   <p className="mt-2 text-xs text-amber-700">
-                    This is how the file will appear in the patient's records. Leave empty to use "{selectedFile.name}"
+                    File extension is preserved automatically. Leave empty to use "{selectedFile.name}"
                   </p>
                 </div>
               )}

@@ -666,6 +666,8 @@ async def get_patient_records(
             "cid": f.get("cid"),
             "filename": f.get("filename"),
             "display_name": f.get("display_name"),  # User-friendly rename (persisted)
+            "category": f.get("category"),  # File category (Lab Results, Imaging, etc.)
+            "description": f.get("description"),  # Description/notes from hospital
             "capsule": f.get("capsule"),  # Capsule metadata (hex)
             "encrypted_cek": f.get("encrypted_cek"),  # CEK encrypted with owner's pk
             "tx_hash": f.get("tx_hash"),  # On-chain upload tx (if any)

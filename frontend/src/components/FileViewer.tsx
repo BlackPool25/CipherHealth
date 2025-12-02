@@ -17,6 +17,7 @@ interface FileViewerProps {
   fileId: number;
   filename: string;
   cid: string;
+  description?: string; // Sensitive - only shown after decryption
   onClose: () => void;
   userPrivateKey?: string; // For owner decryption (deprecated - use passphrase)
   grantId?: number; // For grantee access
@@ -36,6 +37,7 @@ export default function FileViewer({
   fileId, 
   filename, 
   cid, 
+  description,
   onClose,
   userPrivateKey,
   grantId,
@@ -447,6 +449,19 @@ export default function FileViewer({
             /* File Preview */
             <div className="space-y-4">
               {renderFilePreview()}
+              
+              {/* Description/Notes - Only shown after successful decryption */}
+              {description && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl">📝</span>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-indigo-900 mb-1">Notes / Description</h4>
+                      <p className="text-sm text-indigo-800 whitespace-pre-wrap">{description}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {/* File Info */}
               <div className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
