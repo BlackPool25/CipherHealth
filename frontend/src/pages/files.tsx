@@ -352,7 +352,7 @@ export default function FilesPage() {
 
   const handleViewFile = (file: FileRecord) => setSelectedFile(file);
   const handleShareFile = (file: FileRecord) => {
-    router.push(`/access-requests?tab=grant&fileId=${file.id}`);
+    router.push(`/hospital-access?section=patient`);
   };
   const handleRevokeFile = (file: FileRecord) => {
     router.push(`/revoke?cid=${file.cid}`);

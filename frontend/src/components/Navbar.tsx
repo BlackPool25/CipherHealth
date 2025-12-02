@@ -30,8 +30,7 @@ export default function Navbar() {
   // Patient-specific links
   const patientNavLinks = [
     { href: '/files', label: 'My Files', icon: '📁' },
-    { href: '/hospital-access', label: 'Hospital Access', icon: '🏥' },
-    { href: '/access-requests', label: 'Access', icon: '🔐' },
+    { href: '/hospital-access', label: 'Access Management', icon: '🔐' },
   ];
 
   // Hospital-specific links

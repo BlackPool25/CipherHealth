@@ -2844,6 +2844,1109 @@ async def get_files_accessed_by_hospital(
 # ============================================================================
 
 
+# ============================================================================
+# Patient-to-Patient File Sharing
+# ============================================================================
+
+
+async def ensure_patient_file_grants_table():
+    """Create patient_file_grants table if not exists.
+    
+    This tracks which files have been shared between patients.
+    Each grant allows a specific patient to access specific files from another patient.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS patient_file_grants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                granter_patient_id INTEGER NOT NULL,
+                grantee_patient_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'active',
+                granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                revoked_at TIMESTAMP,
+                tx_hash TEXT,
+                grant_cid_hash TEXT,
+                granter_identifier TEXT,
+                grantee_identifier TEXT,
+                FOREIGN KEY (granter_patient_id) REFERENCES users(id),
+                FOREIGN KEY (grantee_patient_id) REFERENCES users(id),
+                FOREIGN KEY (file_id) REFERENCES files(id),
+                UNIQUE(granter_patient_id, grantee_patient_id, file_id)
+            )
+        """)
+        await db.commit()
+
+
+async def ensure_patient_share_requests_table():
+    """Create patient_share_requests table if not exists.
+    
+    This tracks access requests between patients.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS patient_share_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requester_patient_id INTEGER NOT NULL,
+                target_patient_id INTEGER NOT NULL,
+                purpose TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP,
+                tx_hash TEXT,
+                FOREIGN KEY (requester_patient_id) REFERENCES users(id),
+                FOREIGN KEY (target_patient_id) REFERENCES users(id)
+            )
+        """)
+        await db.commit()
+
+
+async def ensure_patient_share_kfrags_table():
+    """Create patient_share_kfrags table if not exists.
+    
+    This stores kfrags for patient-to-patient file sharing.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS patient_share_kfrags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                granter_patient_id INTEGER NOT NULL,
+                grantee_patient_id INTEGER NOT NULL,
+                kfrag_hex TEXT NOT NULL,
+                verifying_key_hex TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                revoked_at TIMESTAMP,
+                FOREIGN KEY (granter_patient_id) REFERENCES users(id),
+                FOREIGN KEY (grantee_patient_id) REFERENCES users(id),
+                UNIQUE(granter_patient_id, grantee_patient_id)
+            )
+        """)
+        await db.commit()
+
+
+class PatientShareRequest(BaseModel):
+    """Request to share files with another patient."""
+    grantee_uuid: str  # UUID of patient to share with
+    file_ids: list[int]  # List of file IDs to share
+    expires_seconds: Optional[int] = None  # Expiry in seconds (None = no expiry)
+    purpose: Optional[str] = None  # Reason for sharing
+
+
+class PatientShareResponse(BaseModel):
+    """Response after granting access to another patient."""
+    grant_ids: list[int]
+    grantee_uuid: str
+    grantee_name: Optional[str]
+    file_count: int
+    status: str
+    expires_at: Optional[str]
+    tx_hash: Optional[str]
+    etherscan_url: Optional[str]
+    message: str
+
+
+class PatientGrantEntry(BaseModel):
+    """Information about a file shared with another patient."""
+    grant_id: int
+    file_id: int
+    filename: str
+    grantee_patient_id: int
+    grantee_uuid: str
+    grantee_name: Optional[str]
+    status: str
+    granted_at: str
+    expires_at: Optional[str]
+    revoked_at: Optional[str]
+    tx_hash: Optional[str]
+
+
+class PatientGrantsListResponse(BaseModel):
+    """Response listing patient file grants."""
+    grants: list[PatientGrantEntry]
+    count: int
+
+
+class PatientAccessEntry(BaseModel):
+    """Information about files shared with me by another patient."""
+    grant_id: int
+    file_id: int
+    filename: str
+    granter_patient_id: int
+    granter_uuid: str
+    granter_name: Optional[str]
+    status: str
+    granted_at: str
+    expires_at: Optional[str]
+
+
+class PatientAccessListResponse(BaseModel):
+    """Response listing files shared with me."""
+    shared_files: list[PatientAccessEntry]
+    count: int
+
+
+class RevokePatientShareRequest(BaseModel):
+    """Request to revoke a patient file share."""
+    grant_id: int
+
+
+async def create_patient_file_grant(
+    granter_patient_id: int,
+    grantee_patient_id: int,
+    file_id: int,
+    expires_at: Optional[str] = None,
+    tx_hash: Optional[str] = None,
+    grant_cid_hash: Optional[str] = None,
+    granter_identifier: Optional[str] = None,
+    grantee_identifier: Optional[str] = None,
+) -> int:
+    """Create or update a patient file grant."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO patient_file_grants 
+            (granter_patient_id, grantee_patient_id, file_id, expires_at, tx_hash, status,
+             grant_cid_hash, granter_identifier, grantee_identifier)
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+            ON CONFLICT(granter_patient_id, grantee_patient_id, file_id) DO UPDATE SET
+                status = 'active',
+                expires_at = excluded.expires_at,
+                tx_hash = COALESCE(excluded.tx_hash, patient_file_grants.tx_hash),
+                grant_cid_hash = COALESCE(excluded.grant_cid_hash, patient_file_grants.grant_cid_hash),
+                granter_identifier = COALESCE(excluded.granter_identifier, patient_file_grants.granter_identifier),
+                grantee_identifier = COALESCE(excluded.grantee_identifier, patient_file_grants.grantee_identifier),
+                granted_at = CURRENT_TIMESTAMP,
+                revoked_at = NULL
+            """,
+            (granter_patient_id, grantee_patient_id, file_id, expires_at, tx_hash,
+             grant_cid_hash, granter_identifier, grantee_identifier),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_patient_file_grants(granter_patient_id: int) -> list[dict]:
+    """Get all file grants given by a patient."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT 
+                pfg.id as grant_id,
+                pfg.file_id,
+                pfg.grantee_patient_id,
+                pfg.status,
+                pfg.granted_at,
+                pfg.expires_at,
+                pfg.revoked_at,
+                pfg.tx_hash,
+                f.filename,
+                u.uuid as grantee_uuid,
+                up.full_name as grantee_name
+            FROM patient_file_grants pfg
+            JOIN files f ON pfg.file_id = f.id
+            JOIN users u ON pfg.grantee_patient_id = u.id
+            LEFT JOIN user_profiles up ON pfg.grantee_patient_id = up.user_id
+            WHERE pfg.granter_patient_id = ?
+            ORDER BY pfg.granted_at DESC
+            """,
+            (granter_patient_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_files_shared_with_patient(grantee_patient_id: int) -> list[dict]:
+    """Get all files shared with a patient by other patients."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT 
+                pfg.id as grant_id,
+                pfg.file_id,
+                pfg.granter_patient_id,
+                pfg.status,
+                pfg.granted_at,
+                pfg.expires_at,
+                f.filename,
+                f.cid,
+                f.capsule,
+                f.encrypted_cek,
+                u.uuid as granter_uuid,
+                up.full_name as granter_name
+            FROM patient_file_grants pfg
+            JOIN files f ON pfg.file_id = f.id
+            JOIN users u ON pfg.granter_patient_id = u.id
+            LEFT JOIN user_profiles up ON pfg.granter_patient_id = up.user_id
+            WHERE pfg.grantee_patient_id = ? AND pfg.status = 'active'
+            ORDER BY pfg.granted_at DESC
+            """,
+            (grantee_patient_id,),
+        )
+        rows = await cursor.fetchall()
+        
+        # Check expiry
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        valid_grants = []
+        for row in rows:
+            grant = dict(row)
+            expires_at = grant.get("expires_at")
+            if expires_at:
+                try:
+                    exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    if exp_dt < now:
+                        continue  # Expired
+                except (ValueError, TypeError):
+                    pass
+            valid_grants.append(grant)
+        
+        return valid_grants
+
+
+async def get_patient_file_grant(grant_id: int) -> Optional[dict]:
+    """Get a specific patient file grant."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM patient_file_grants WHERE id = ?",
+            (grant_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def revoke_patient_file_grant(grant_id: int, granter_patient_id: int) -> bool:
+    """Revoke a patient file grant."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE patient_file_grants
+            SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND granter_patient_id = ? AND status = 'active'
+            """,
+            (grant_id, granter_patient_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def check_patient_has_file_access(grantee_patient_id: int, file_id: int) -> bool:
+    """Check if a patient has active access to a specific file."""
+    await ensure_patient_file_grants_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM patient_file_grants 
+            WHERE grantee_patient_id = ? AND file_id = ? AND status = 'active'
+            """,
+            (grantee_patient_id, file_id),
+        )
+        row = await cursor.fetchone()
+        
+        if not row:
+            return False
+        
+        # Check expiry
+        expires_at = row["expires_at"]
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if exp_dt < datetime.now(timezone.utc):
+                    return False
+            except (ValueError, TypeError):
+                pass
+        
+        return True
+
+
+async def store_patient_share_kfrag(
+    granter_patient_id: int,
+    grantee_patient_id: int,
+    kfrag_hex: str,
+    verifying_key_hex: str,
+    expires_at: Optional[str] = None,
+) -> int:
+    """Store kfrag for patient-to-patient sharing."""
+    await ensure_patient_share_kfrags_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO patient_share_kfrags 
+            (granter_patient_id, grantee_patient_id, kfrag_hex, verifying_key_hex, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(granter_patient_id, grantee_patient_id) DO UPDATE SET
+                kfrag_hex = excluded.kfrag_hex,
+                verifying_key_hex = excluded.verifying_key_hex,
+                expires_at = excluded.expires_at,
+                created_at = CURRENT_TIMESTAMP,
+                revoked_at = NULL
+            """,
+            (granter_patient_id, grantee_patient_id, kfrag_hex, verifying_key_hex, expires_at),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_patient_share_kfrag(granter_patient_id: int, grantee_patient_id: int) -> Optional[dict]:
+    """Get kfrag for patient-to-patient sharing."""
+    await ensure_patient_share_kfrags_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM patient_share_kfrags 
+            WHERE granter_patient_id = ? AND grantee_patient_id = ? AND revoked_at IS NULL
+            """,
+            (granter_patient_id, grantee_patient_id),
+        )
+        row = await cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        # Check expiry
+        expires_at = row["expires_at"]
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if exp_dt < datetime.now(timezone.utc):
+                    return None
+            except (ValueError, TypeError):
+                pass
+        
+        return dict(row)
+
+
+async def revoke_patient_share_kfrag(granter_patient_id: int, grantee_patient_id: int) -> bool:
+    """Revoke kfrag for patient-to-patient sharing."""
+    await ensure_patient_share_kfrags_table()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE patient_share_kfrags
+            SET revoked_at = CURRENT_TIMESTAMP
+            WHERE granter_patient_id = ? AND grantee_patient_id = ? AND revoked_at IS NULL
+            """,
+            (granter_patient_id, grantee_patient_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+@router.post("/share-files", response_model=PatientShareResponse)
+async def share_files_with_patient(
+    grantee_uuid: str = Form(...),
+    file_ids: str = Form(...),  # JSON array string of file IDs
+    expires_seconds: Optional[int] = Form(None),
+    purpose: Optional[str] = Form(None),
+    secret_key_hex: Optional[str] = Form(None),
+    signing_key_hex: Optional[str] = Form(None),
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Share one or more files with another patient.
+    
+    This allows patients to securely share their medical records with other patients
+    (e.g., family members, caretakers). The sharing is recorded on-chain for transparency.
+    
+    All parameters are sent as Form data to avoid mixing Pydantic body with Form params.
+    
+    Args:
+        grantee_uuid: UUID of the patient to share with
+        file_ids: JSON string of file IDs to share (e.g., "[1, 2, 3]")
+        expires_seconds: Optional expiry in seconds
+        purpose: Optional reason for sharing
+        secret_key_hex: Patient's secret key for server-side kfrag generation
+        signing_key_hex: Optional signing key
+        current_user: Authenticated patient user
+        
+    Returns:
+        Share confirmation with on-chain transaction
+    """
+    import json
+    
+    # Parse file_ids from JSON string
+    try:
+        parsed_file_ids = json.loads(file_ids)
+        if not isinstance(parsed_file_ids, list):
+            raise ValueError("file_ids must be an array")
+        parsed_file_ids = [int(fid) for fid in parsed_file_ids]
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file_ids format: {str(e)}. Expected JSON array like [1, 2, 3]",
+        )
+    
+    # Verify caller is a patient
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can share files",
+        )
+    
+    granter_id = current_user["id"]
+    
+    # Get grantee patient by UUID
+    grantee = await get_user_by_uuid(grantee_uuid)
+    if not grantee or grantee.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient with UUID '{grantee_uuid}' not found",
+        )
+    
+    if grantee["id"] == granter_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot share files with yourself",
+        )
+    
+    grantee_id = grantee["id"]
+    grantee_uuid_str = grantee.get("uuid")
+    
+    # Verify all files belong to the granter
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        for file_id in parsed_file_ids:
+            cursor = await db.execute(
+                "SELECT owner_id, filename FROM files WHERE id = ?",
+                (file_id,),
+            )
+            file_row = await cursor.fetchone()
+            if not file_row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"File {file_id} not found",
+                )
+            if file_row["owner_id"] != granter_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"File {file_id} does not belong to you",
+                )
+    
+    # Get granter and grantee info for on-chain recording
+    granter = await get_user_by_id(granter_id)
+    granter_uuid = granter.get("uuid")
+    
+    if not granter_uuid or not grantee_uuid_str:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User UUIDs not found. Re-registration required.",
+        )
+    
+    # Calculate expiry
+    expires_at = None
+    expiry_timestamp = 0
+    if expires_seconds:
+        from datetime import timedelta
+        expires_dt = datetime.now(timezone.utc) + timedelta(seconds=expires_seconds)
+        expires_at = expires_dt.isoformat()
+        expiry_timestamp = int(expires_dt.timestamp())
+    
+    # Record on-chain using ConsentRegistry (similar to hospital grants)
+    tx_hash = None
+    etherscan_url = None
+    grant_cid_hash = None
+    
+    if is_chain_configured():
+        try:
+            # Use a combined identifier for patient-to-patient sharing
+            # Format: "p2p:{granter_uuid}:{grantee_uuid}"
+            combined_id = f"p2p:{granter_uuid}:{grantee_uuid_str}"
+            
+            chain_result = await grant_hospital_access_onchain(
+                patient_identifier=granter_uuid,
+                hospital_identifier=grantee_uuid_str,  # Using same mechanism but for patient
+                hospital_eth_address=f"0x{grantee_id:040x}",  # Placeholder address
+                expiry_timestamp=expiry_timestamp,
+            )
+            tx_hash = chain_result.get("tx_hash")
+            grant_cid_hash = chain_result.get("cid_hash")
+            if tx_hash:
+                etherscan_url = get_etherscan_url(tx_hash)
+        except (ChainConfigError, ChainError) as e:
+            # Log but don't fail - continue with DB-only grant
+            print(f"Warning: On-chain recording failed for patient share: {e}")
+    
+    # Create grants for each file
+    grant_ids = []
+    for file_id in parsed_file_ids:
+        grant_id = await create_patient_file_grant(
+            granter_patient_id=granter_id,
+            grantee_patient_id=grantee_id,
+            file_id=file_id,
+            expires_at=expires_at,
+            tx_hash=tx_hash,
+            grant_cid_hash=grant_cid_hash,
+            granter_identifier=granter_uuid,
+            grantee_identifier=grantee_uuid_str,
+        )
+        grant_ids.append(grant_id)
+    
+    # Generate and store kfrag for decryption if secret_key provided
+    kfrag_stored = False
+    if secret_key_hex:
+        try:
+            grantee_public_key = grantee.get("public_key")
+            if grantee_public_key:
+                from app.utils.umbral_utils import generate_kfrag_from_secret_key_bytes
+                
+                generated_kfrag_hex, generated_verifying_key_hex = generate_kfrag_from_secret_key_bytes(
+                    delegating_sk_bytes_hex=secret_key_hex,
+                    receiving_pk_hex=grantee_public_key,
+                    signing_sk_bytes_hex=signing_key_hex,
+                )
+                
+                await store_patient_share_kfrag(
+                    granter_patient_id=granter_id,
+                    grantee_patient_id=grantee_id,
+                    kfrag_hex=generated_kfrag_hex,
+                    verifying_key_hex=generated_verifying_key_hex,
+                    expires_at=expires_at,
+                )
+                kfrag_stored = True
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to generate kfrag for patient share: {e}")
+    
+    # Record in audit log
+    import json
+    try:
+        grantee_profile = None
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT full_name FROM user_profiles WHERE user_id = ?",
+                (grantee_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                grantee_profile = dict(row)
+        
+        await create_audit_log(
+            event_type="patient_share",
+            actor_id=granter_id,
+            target_id=grantee_id,
+            patient_id=granter_id,
+            file_id=parsed_file_ids[0] if parsed_file_ids else None,
+            cid=None,
+            details=json.dumps({
+                "grantee_name": grantee_profile.get("full_name") if grantee_profile else None,
+                "grantee_uuid": grantee_uuid_str,
+                "file_count": len(parsed_file_ids),
+                "file_ids": parsed_file_ids,
+                "expires_at": expires_at,
+                "purpose": purpose,
+                "kfrag_stored": kfrag_stored,
+                "action": "patient_file_shared",
+            }),
+            tx_hash=tx_hash,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create patient share audit log: {e}")
+    
+    # Get grantee name for response
+    grantee_name = None
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT full_name FROM user_profiles WHERE user_id = ?",
+                (grantee_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                grantee_name = row["full_name"]
+    except Exception:
+        pass
+    
+    return PatientShareResponse(
+        grant_ids=grant_ids,
+        grantee_uuid=grantee_uuid_str,
+        grantee_name=grantee_name,
+        file_count=len(parsed_file_ids),
+        status="active",
+        expires_at=expires_at,
+        tx_hash=tx_hash,
+        etherscan_url=etherscan_url,
+        message=f"Successfully shared {len(parsed_file_ids)} file(s) with patient" + 
+                (" (recorded on-chain)" if tx_hash else " (off-chain only)"),
+    )
+
+
+@router.get("/my-shared-files", response_model=PatientGrantsListResponse)
+async def get_my_shared_files(
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get all files the current patient has shared with other patients.
+    
+    Returns:
+        List of file grants with grantee info
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can view their shared files",
+        )
+    
+    grants = await get_patient_file_grants(current_user["id"])
+    
+    return PatientGrantsListResponse(
+        grants=[
+            PatientGrantEntry(
+                grant_id=g["grant_id"],
+                file_id=g["file_id"],
+                filename=g["filename"],
+                grantee_patient_id=g["grantee_patient_id"],
+                grantee_uuid=g["grantee_uuid"],
+                grantee_name=g.get("grantee_name"),
+                status=g["status"],
+                granted_at=format_timestamp(g.get("granted_at")) or "",
+                expires_at=format_timestamp(g.get("expires_at")),
+                revoked_at=format_timestamp(g.get("revoked_at")),
+                tx_hash=g.get("tx_hash"),
+            )
+            for g in grants
+        ],
+        count=len(grants),
+    )
+
+
+@router.get("/files-shared-with-me", response_model=PatientAccessListResponse)
+async def get_files_shared_with_me(
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get all files shared with the current patient by other patients.
+    
+    Returns:
+        List of shared file grants with granter info
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can view files shared with them",
+        )
+    
+    shared_files = await get_files_shared_with_patient(current_user["id"])
+    
+    return PatientAccessListResponse(
+        shared_files=[
+            PatientAccessEntry(
+                grant_id=f["grant_id"],
+                file_id=f["file_id"],
+                filename=f["filename"],
+                granter_patient_id=f["granter_patient_id"],
+                granter_uuid=f["granter_uuid"],
+                granter_name=f.get("granter_name"),
+                status=f["status"],
+                granted_at=format_timestamp(f.get("granted_at")) or "",
+                expires_at=format_timestamp(f.get("expires_at")),
+            )
+            for f in shared_files
+        ],
+        count=len(shared_files),
+    )
+
+
+@router.post("/revoke-patient-share")
+async def revoke_patient_share(
+    request: RevokePatientShareRequest,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Revoke a file share with another patient.
+    
+    This removes the patient's ability to access the shared file.
+    The revocation is recorded on-chain if the original grant was on-chain.
+    
+    Args:
+        request: Contains grant_id to revoke
+        current_user: Authenticated patient (must be the granter)
+        
+    Returns:
+        Revocation confirmation
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can revoke shares",
+        )
+    
+    granter_id = current_user["id"]
+    
+    # Get the grant
+    grant = await get_patient_file_grant(request.grant_id)
+    if not grant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grant not found",
+        )
+    
+    if grant["granter_patient_id"] != granter_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only revoke your own shares",
+        )
+    
+    if grant["status"] != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Grant is already {grant['status']}",
+        )
+    
+    grantee_id = grant["grantee_patient_id"]
+    
+    # Try on-chain revocation if we have the necessary data
+    tx_hash = None
+    stored_cid_hash = grant.get("grant_cid_hash")
+    granter_identifier = grant.get("granter_identifier")
+    grantee_identifier = grant.get("grantee_identifier")
+    
+    if is_chain_configured() and stored_cid_hash:
+        try:
+            tx_hash = await revoke_hospital_access_onchain(
+                stored_cid_hash=stored_cid_hash,
+                patient_identifier=granter_identifier,
+                hospital_identifier=grantee_identifier,
+            )
+        except (ChainConfigError, ChainError) as e:
+            print(f"Warning: On-chain revocation failed: {e}")
+    
+    # Revoke in DB
+    success = await revoke_patient_file_grant(request.grant_id, granter_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke grant",
+        )
+    
+    # Check if there are any other active grants to this grantee
+    remaining_grants = await get_patient_file_grants(granter_id)
+    has_other_active_grants = any(
+        g["grantee_patient_id"] == grantee_id and g["status"] == "active" and g["grant_id"] != request.grant_id
+        for g in remaining_grants
+    )
+    
+    # If no other active grants, also revoke the kfrag
+    kfrag_revoked = False
+    if not has_other_active_grants:
+        kfrag_revoked = await revoke_patient_share_kfrag(granter_id, grantee_id)
+    
+    # Record in audit log
+    import json
+    try:
+        await create_audit_log(
+            event_type="patient_share_revoke",
+            actor_id=granter_id,
+            target_id=grantee_id,
+            patient_id=granter_id,
+            file_id=grant.get("file_id"),
+            cid=None,
+            details=json.dumps({
+                "grant_id": request.grant_id,
+                "grantee_uuid": grantee_identifier,
+                "kfrag_revoked": kfrag_revoked,
+                "action": "patient_file_share_revoked",
+            }),
+            tx_hash=tx_hash,
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create revoke audit log: {e}")
+    
+    return {
+        "grant_id": request.grant_id,
+        "status": "revoked",
+        "tx_hash": tx_hash,
+        "etherscan_url": get_etherscan_url(tx_hash) if tx_hash else None,
+        "kfrag_revoked": kfrag_revoked,
+        "message": "File share revoked" + (" (recorded on-chain)" if tx_hash else ""),
+    }
+
+
+@router.post("/decrypt-shared-file/{file_id}")
+async def decrypt_shared_file(
+    file_id: int,
+    secret_key_hex: str = Form(...),
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Decrypt a file that was shared with the current patient by another patient.
+    
+    This uses the stored kfrag to perform proxy re-encryption, allowing the
+    grantee patient to decrypt the file with their own key.
+    
+    Args:
+        file_id: ID of the shared file to decrypt
+        secret_key_hex: Grantee patient's secret key as hex
+        current_user: Authenticated patient (must be the grantee)
+        
+    Returns:
+        Decrypted file content as base64
+    """
+    import base64
+    import mimetypes
+    from app.storage import download_blob
+    from app.utils.umbral_utils import (
+        UMBRAL_AVAILABLE, 
+        reencrypt_capsule, 
+        decrypt_reencrypted_from_bytes,
+        decrypt_with_cek,
+    )
+    
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can use this endpoint",
+        )
+    
+    grantee_id = current_user["id"]
+    
+    # Validate secret key format
+    try:
+        sk_bytes = bytes.fromhex(secret_key_hex)
+        if len(sk_bytes) != 32:
+            raise ValueError(f"Secret key must be 32 bytes, got {len(sk_bytes)}")
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid secret key format: {str(e)}",
+        )
+    
+    # Check if patient has access to this file
+    has_access = await check_patient_has_file_access(grantee_id, file_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this file. The share may have been revoked or expired.",
+        )
+    
+    # Get the file record
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM files WHERE id = ?",
+            (file_id,),
+        )
+        file_row = await cursor.fetchone()
+        
+        if not file_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found",
+            )
+        
+        file_record = dict(file_row)
+        granter_id = file_record.get("owner_id")
+    
+    # Get the kfrag for this sharing pair
+    kfrag_record = await get_patient_share_kfrag(granter_id, grantee_id)
+    if not kfrag_record:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No re-encryption key found. The sharing patient needs to re-authorize access.",
+        )
+    
+    kfrag_hex = kfrag_record.get("kfrag_hex")
+    verifying_key_hex = kfrag_record.get("verifying_key_hex")
+    
+    # Get granter's public key (delegating_pk)
+    granter = await get_user_by_id(granter_id)
+    granter_public_key = granter.get("public_key")
+    
+    if not granter_public_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sharing patient has no public key configured",
+        )
+    
+    # Get grantee's public key (receiving_pk)
+    grantee = await get_user_by_id(grantee_id)
+    grantee_public_key = grantee.get("public_key")
+    
+    if not grantee_public_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have no public key configured. Set up encryption keys in Profile first.",
+        )
+    
+    # Get file's encryption data
+    cid = file_record.get("cid")
+    capsule_hex = file_record.get("capsule")
+    encrypted_cek = file_record.get("encrypted_cek")
+    filename = file_record.get("filename", "unknown")
+    
+    if not cid or not capsule_hex or not encrypted_cek:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is missing encryption metadata",
+        )
+    
+    if not UMBRAL_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PRE encryption is not available",
+        )
+    
+    try:
+        # Step 1: Re-encrypt capsule using kfrag → cfrag
+        cfrag_hex = reencrypt_capsule(
+            capsule_hex=capsule_hex,
+            kfrag_hex=kfrag_hex,
+            delegating_pk_hex=granter_public_key,
+            verifying_pk_hex=verifying_key_hex,
+            receiving_pk_hex=grantee_public_key,
+        )
+        
+        # Step 2: Decrypt CEK using cfrag + grantee's secret key
+        decrypted_cek = decrypt_reencrypted_from_bytes(
+            capsule_hex=capsule_hex,
+            cfrag_hex=cfrag_hex,
+            ciphertext_hex=encrypted_cek,
+            delegating_pk_hex=granter_public_key,
+            receiving_sk_bytes_hex=secret_key_hex,
+            receiving_pk_hex=grantee_public_key,
+            verifying_pk_hex=verifying_key_hex,
+        )
+        
+        # Step 3: Download encrypted file from Storacha
+        encrypted_blob = download_blob(cid)
+        
+        # Extract nonce (first 12 bytes) and ciphertext
+        nonce = encrypted_blob[:12]
+        ciphertext = encrypted_blob[12:]
+        
+        # Step 4: Decrypt file content with CEK
+        decrypted_content = decrypt_with_cek(ciphertext, decrypted_cek, nonce)
+        
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = "application/octet-stream"
+        
+        # Encode as base64
+        content_b64 = base64.b64encode(decrypted_content).decode("utf-8")
+        
+        # Record access in audit log
+        import json
+        try:
+            await create_audit_log(
+                event_type="patient_share_access",
+                actor_id=grantee_id,
+                target_id=granter_id,
+                patient_id=granter_id,
+                file_id=file_id,
+                cid=cid,
+                details=json.dumps({
+                    "filename": filename,
+                    "action": "shared_file_accessed",
+                }),
+                tx_hash=None,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create access audit log: {e}")
+        
+        return {
+            "file_id": file_id,
+            "filename": filename,
+            "content_base64": content_b64,
+            "content_type": content_type,
+            "size": len(decrypted_content),
+            "message": "File decrypted successfully using PRE",
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Decryption failed: {str(e)}",
+        )
+
+
+@router.get("/patient-public-key/{patient_uuid}")
+async def get_patient_public_key(
+    patient_uuid: str,
+    current_user: dict = Depends(require_current_user),
+):
+    """
+    Get a patient's public key by UUID for sharing purposes.
+    
+    This allows checking if a patient has set up encryption keys before sharing.
+    
+    Args:
+        patient_uuid: UUID of the patient to look up
+        current_user: Authenticated user
+        
+    Returns:
+        Patient's public key if available
+    """
+    if current_user.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can look up other patient keys",
+        )
+    
+    patient = await get_user_by_uuid(patient_uuid)
+    if not patient or patient.get("role") != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient with UUID '{patient_uuid}' not found",
+        )
+    
+    public_key = patient.get("public_key")
+    patient_username = patient.get("username")
+    
+    # Get patient name from profile
+    patient_name = None
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT full_name FROM user_profiles WHERE user_id = ?",
+                (patient["id"],),
+            )
+            row = await cursor.fetchone()
+            if row and row["full_name"]:
+                patient_name = row["full_name"]
+    except Exception:
+        pass
+    
+    # Use username as fallback if no profile name
+    display_name = patient_name or patient_username
+    
+    return {
+        "patient_uuid": patient_uuid,
+        "patient_name": display_name,
+        "has_public_key": public_key is not None,
+        "public_key": public_key,
+        "message": "Patient has encryption keys set up" if public_key else "Patient has not set up encryption keys yet",
+    }
+
+
+# ============================================================================
+# Admin/Maintenance Endpoints
+# ============================================================================
+
+
 @router.get("/admin/users-without-uuid")
 async def list_users_without_uuid(
     current_user: dict = Depends(require_current_user),

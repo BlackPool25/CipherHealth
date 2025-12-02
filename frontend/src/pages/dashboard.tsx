@@ -3,7 +3,7 @@
  * User's main landing page showing records and navigation
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import Layout from '@/components/Layout';
@@ -12,8 +12,17 @@ import FileViewer from '@/components/FileViewer';
 import HospitalInviteTokens from '@/components/HospitalInviteTokens';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
-import { listFiles, listGrants, getHospitalPatients, HospitalPatient, getCurrentUser } from '@/lib/api';
+import { listFiles, listGrants, getHospitalPatients, HospitalPatient, getCurrentUser, getMySharedFiles, PatientGrantEntry, getPatientHospitals, HospitalAccess } from '@/lib/api';
 import KeyManager from '@/lib/KeyManager';
+
+interface CombinedGrant {
+  id: number;
+  type: 'hospital' | 'patient';
+  name: string;
+  filename?: string;
+  status: string;
+  granted_at: string;
+}
 
 interface FileRecord {
   id: number;
@@ -127,12 +136,47 @@ export default function DashboardPage() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [hospitalPatients, setHospitalPatients] = useState<HospitalPatient[]>([]);
+  const [patientShares, setPatientShares] = useState<PatientGrantEntry[]>([]);
+  const [activeHospitalAccess, setActiveHospitalAccess] = useState<HospitalAccess[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [isLoadingGrants, setIsLoadingGrants] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [expandedFileId, setExpandedFileId] = useState<number | null>(null);
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [hasEncryptionKeys, setHasEncryptionKeys] = useState<boolean | null>(null);
+
+  // Combine active hospital access (for patients) and patient shares, sorted by time
+  const combinedGrants = useMemo<CombinedGrant[]>(() => {
+    // For patients: hospitals that currently have access to them
+    const hospitalAccessEntries: CombinedGrant[] = activeHospitalAccess
+      .filter(h => h.status === 'active')
+      .map(h => ({
+        id: h.hospital_id,
+        type: 'hospital' as const,
+        name: h.hospital_name || 'Unknown Hospital',
+        status: 'active',
+        granted_at: h.granted_at || '',
+      }));
+    
+    // Patient-to-patient shares (files they've shared)
+    const patientGrantEntries: CombinedGrant[] = patientShares.map(p => ({
+      id: p.grant_id,
+      type: 'patient' as const,
+      name: p.grantee_name || p.grantee_uuid.slice(0, 8) + '...',
+      filename: p.filename,
+      status: p.status,
+      granted_at: p.granted_at,
+    }));
+    
+    // Combine and sort by granted_at (newest first)
+    const all = [...hospitalAccessEntries, ...patientGrantEntries];
+    return all.sort((a, b) => {
+      if (!a.granted_at && !b.granted_at) return 0;
+      if (!a.granted_at) return 1;
+      if (!b.granted_at) return -1;
+      return new Date(b.granted_at).getTime() - new Date(a.granted_at).getTime();
+    });
+  }, [activeHospitalAccess, patientShares]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -141,10 +185,10 @@ export default function DashboardPage() {
   }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user?.id && !authLoading) {
       loadData();
     }
-  }, [user]);
+  }, [user, isHospital, authLoading]);
 
   const loadData = async () => {
     if (!user?.id) return;
@@ -173,6 +217,24 @@ export default function DashboardPage() {
       if (patientsResult.data) {
         const activePatients = patientsResult.data.patients.filter(p => p.status === 'active');
         setHospitalPatients(activePatients);
+      }
+    } else {
+      // Load patient data: hospitals with access + files shared with other patients
+      const [hospitalsResult, sharesResult] = await Promise.all([
+        getPatientHospitals(),
+        getMySharedFiles(),
+      ]);
+      
+      if (hospitalsResult.data) {
+        // Only active hospital access
+        const activeAccess = hospitalsResult.data.hospitals.filter((h: HospitalAccess) => h.status === 'active');
+        setActiveHospitalAccess(activeAccess);
+      }
+      
+      if (sharesResult.data) {
+        // Only active patient shares
+        const activeShares = sharesResult.data.grants.filter(g => g.status === 'active');
+        setPatientShares(activeShares);
       }
     }
 
@@ -269,7 +331,7 @@ export default function DashboardPage() {
               <span className="text-white">🔗</span>
             </div>
             <div>
-              <p className="text-3xl font-bold text-gray-900">{grants.length}</p>
+              <p className="text-3xl font-bold text-gray-900">{combinedGrants.length}</p>
               <p className="text-sm text-gray-500 font-medium">Active Grants</p>
             </div>
           </div>
@@ -338,7 +400,7 @@ export default function DashboardPage() {
         )}
         
         <Link 
-          href={isHospital ? "/my-patients" : "/access-requests?tab=grant"}
+          href={isHospital ? "/my-patients" : "/hospital-access"}
           className="glass-card p-6 hover:shadow-xl hover:shadow-emerald-500/10 transition-all duration-300 group card-lift"
         >
           <div className="flex items-center gap-4">
@@ -506,7 +568,7 @@ export default function DashboardPage() {
                     isExpanded={expandedFileId === file.id}
                     onToggle={() => setExpandedFileId(expandedFileId === file.id ? null : file.id)}
                     onView={() => setSelectedFile({ id: file.id, filename: file.filename, cid: file.cid })}
-                    onShare={() => router.push(`/access-requests?tab=grant&fileId=${file.id}`)}
+                    onShare={() => router.push(`/hospital-access?section=patient`)}
                   />
                 ))}
                 
@@ -537,7 +599,7 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">Active Grants</h2>
-                  <p className="text-sm text-gray-500">Shared access</p>
+                  <p className="text-sm text-gray-500">Hospital & patient shares</p>
                 </div>
               </div>
             </div>
@@ -549,40 +611,51 @@ export default function DashboardPage() {
                   <div className="absolute top-0 left-0 w-8 h-8 border-3 border-transparent border-t-emerald-500 rounded-full animate-spin"></div>
                 </div>
               </div>
-            ) : grants.length === 0 ? (
+            ) : combinedGrants.length === 0 ? (
               <div className="text-center py-8 px-6">
                 <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
                   <span className="text-2xl">🔗</span>
                 </div>
                 <p className="text-gray-500 text-sm mb-3">No active grants</p>
-                <Link href="/access-requests?tab=grant" className="text-sm text-emerald-600 hover:text-emerald-700 font-medium">
+                <Link href="/hospital-access" className="text-sm text-emerald-600 hover:text-emerald-700 font-medium">
                   Share a record →
                 </Link>
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {grants.slice(0, 5).map((grant) => (
-                  <div key={grant.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+                {combinedGrants.slice(0, 6).map((grant) => (
+                  <div key={`${grant.type}-${grant.id}`} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-md">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md ${
+                        grant.type === 'hospital' 
+                          ? 'bg-gradient-to-br from-indigo-500 to-purple-500' 
+                          : 'bg-gradient-to-br from-emerald-500 to-teal-500'
+                      }`}>
                         <span className="text-white font-bold text-sm">
-                          {grant.grantee_username?.charAt(0).toUpperCase() || '?'}
+                          {grant.type === 'hospital' ? '🏥' : grant.name?.charAt(0).toUpperCase() || '?'}
                         </span>
                       </div>
-                      <div>
-                        <p className="font-semibold text-gray-900 text-sm">{grant.grantee_username}</p>
-                        <p className="text-xs text-gray-500">Has access</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{grant.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {grant.type === 'hospital' ? 'Hospital Access' : (
+                            <>Shared with patient {grant.filename && <span className="text-gray-400">• {grant.filename}</span>}</>
+                          )}
+                        </p>
+                        {grant.granted_at && (
+                          <p className="text-xs text-gray-400">{formatDate(grant.granted_at)}</p>
+                        )}
                       </div>
                     </div>
-                    <span className={`badge-${grant.status === 'active' ? 'success' : 'info'}`}>
+                    <span className={`badge-${grant.status === 'active' ? 'success' : 'info'} flex-shrink-0`}>>
                       {grant.status}
                     </span>
                   </div>
                 ))}
                 
-                {grants.length > 5 && (
+                {combinedGrants.length > 6 && (
                   <div className="p-4">
-                    <Link href="/access-requests?tab=mygrants" className="text-sm text-gray-500 hover:text-indigo-600 font-medium">
+                    <Link href="/hospital-access" className="text-sm text-gray-500 hover:text-indigo-600 font-medium">
                       View all grants →
                     </Link>
                   </div>
