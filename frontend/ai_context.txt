@@ -1,0 +1,5 @@
+TYPESCRIPT ERRORS:
+src/pages/hospital-access.tsx(1100,5): error TS1005: ',' expected.
+src/pages/hospital-access.tsx(1101,18): error TS1005: ',' expected.
+src/pages/hospital-access.tsx(1103,3): error TS1128: Declaration or statement expected.
+src/pages/hospital-access.tsx(2868,1): error TS1128: Declaration or statement expected.

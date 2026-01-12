@@ -15,7 +15,6 @@ import type {
     PublicKey as UmbralPublicKey,
     Capsule as UmbralCapsule,
     CapsuleFrag as UmbralCapsuleFrag,
-    EncryptedMessage,
 } from '@nucypher/umbral-pre';
 
 import KeyManager from './KeyManager';
@@ -147,11 +146,11 @@ export function encryptForRecipient(
     recipientPk: PublicKey
 ): { capsule: Capsule; ciphertext: Uint8Array } {
     const { encrypt } = getModule();
-    const result: EncryptedMessage = encrypt(recipientPk, plaintext);
+    const [capsule, ciphertext] = encrypt(recipientPk, plaintext);
 
     return {
-        capsule: result.capsule,
-        ciphertext: result.ciphertext,
+        capsule,
+        ciphertext,
     };
 }
 
@@ -207,8 +206,8 @@ export function decryptReencrypted(
         sk,
         delegatingPk,
         capsule,
-        [cfrag],
-        ciphertext
+        [cfrag as any],
+        ciphertext as any
     );
 }
 
@@ -292,16 +291,16 @@ export async function encryptWithCEK(
 
     const key = await crypto.subtle.importKey(
         'raw',
-        cek,
+        cek as any,
         { name: 'AES-GCM' },
         false,
         ['encrypt']
     );
 
     const ciphertext = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: nonce },
+        { name: 'AES-GCM', iv: nonce as any },
         key,
-        plaintext
+        plaintext as any
     );
 
     return {
@@ -324,16 +323,16 @@ export async function decryptWithCEK(
 ): Promise<Uint8Array> {
     const key = await crypto.subtle.importKey(
         'raw',
-        cek,
+        cek as any,
         { name: 'AES-GCM' },
         false,
         ['decrypt']
     );
 
     const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: nonce },
+        { name: 'AES-GCM', iv: nonce as any },
         key,
-        ciphertext
+        ciphertext as any
     );
 
     return new Uint8Array(plaintext);
@@ -526,7 +525,14 @@ export async function loadKeys(userId: string, passphrase: string): Promise<Stor
  * Check if user has stored keys
  */
 export async function hasStoredKeys(userId: string): Promise<boolean> {
-    return KeyManager.hasStoredKey(userId);
+    return KeyManager.hasKeypair(userId);
+}
+
+/**
+ * Get stored public key without passphrase
+ */
+export async function getStoredPublicKey(userId: string): Promise<string | null> {
+    return KeyManager.loadPublicKey(userId);
 }
 
 /**

@@ -229,7 +229,7 @@ export default function DashboardPage() {
 
     if (userResult.data) {
       const hasServerKey = !!userResult.data.public_key;
-      const hasLocalKey = KeyManager.hasKeypair(String(user.id));
+      const hasLocalKey = await KeyManager.hasKeypair(String(user.id));
       setHasEncryptionKeys(hasServerKey && hasLocalKey);
     }
 
@@ -499,14 +499,14 @@ export default function DashboardPage() {
                           className="flex items-center gap-3 p-3 rounded-xl border-2 border-gray-200 hover:border-black hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all group"
                         >
                           <div className="w-10 h-10 rounded-full bg-[#14B8A6] border-2 border-black flex items-center justify-center text-white font-bold">
-                            {(patient.patient_name || 'P').charAt(0).toUpperCase()}
+                            {(patient.name || 'P').charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-bold text-gray-900 truncate">
-                              {patient.patient_name || 'Patient (Profile incomplete)'}
+                              {patient.name || 'Patient (Profile incomplete)'}
                             </p>
                             <p className="text-xs text-gray-500 font-medium">
-                              {patient.file_count} files • Access {patient.expires_at ? 'expires ' + formatDate(patient.expires_at) : 'permanent'}
+                              {patient.files_count} files • Access {patient.expires_at ? 'expires ' + formatDate(patient.expires_at) : 'permanent'}
                             </p>
                           </div>
                           <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-black" />
@@ -610,8 +610,8 @@ export default function DashboardPage() {
                   <div key={`${grant.type}-${grant.id}`} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-full border-2 border-black flex items-center justify-center ${grant.type === 'hospital'
-                          ? 'bg-[#2F81F7]'
-                          : 'bg-[#14B8A6]'
+                        ? 'bg-[#2F81F7]'
+                        : 'bg-[#14B8A6]'
                         }`}>
                         <span className="text-white text-sm">
                           {grant.type === 'hospital' ? '🏥' : grant.name?.charAt(0).toUpperCase() || '?'}

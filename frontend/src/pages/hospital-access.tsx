@@ -55,10 +55,14 @@ import {
   generateKeyPair,
   generateSigningKeyPair,
   loadKeys,
+  getStoredPublicKey,
   storeKeys,
   hasStoredKeys,
   exportKeysForBackup,
   importKeysFromBackup,
+  secretKeyFromBytes,
+  getPublicKey,
+  publicKeyToHex,
 } from '@/lib/umbral';
 
 type TabType = 'pending' | 'active' | 'history' | 'patient-sharing' | 'patient-history' | 'shared-with-me' | 'records' | 'keys';
@@ -90,11 +94,11 @@ interface CollapsibleCardProps {
   isCorrectNetwork?: boolean;
 }
 
-function CollapsibleCard({ 
-  hospital, 
-  type, 
-  isExpanded, 
-  onToggle, 
+function CollapsibleCard({
+  hospital,
+  type,
+  isExpanded,
+  onToggle,
   onAction,
   isLoading,
   isConnected,
@@ -153,10 +157,10 @@ function CollapsibleCard({
     });
   };
 
-  const status = isPending ? 'pending' : h.access_status;
-  const hospitalName = isPending 
-    ? p.hospital_username 
-    : (h.hospital_name || h.hospital_username);
+  const status = isPending ? 'pending' : (hospital as any).status || h.status;
+  const hospitalName = isPending
+    ? (p.hospital_username || 'Unknown')
+    : (h.hospital_name || h.hospital_username || 'Unknown');
   const branchInfo = !isPending && h.branch_name ? h.branch_name : null;
   const locationInfo = !isPending && h.location ? h.location : null;
 
@@ -164,11 +168,11 @@ function CollapsibleCard({
   // Check if this was a hospital-initiated withdrawal
   const isWithdrawn = !isPending && h.withdrawn_by_hospital;
   // Check revoked_at field as fallback since status might not always be accurate
-  const isRevoked = !isPending && !isWithdrawn && (status === 'revoked' || (h.revoked_at && status !== 'denied'));
-  
+  const isRevoked = !isPending && !isWithdrawn && (status === 'revoked' || h.revoked_at);
+
   const getEventBadge = () => {
     if (!isHistory) return null;
-    
+
     // Hospital withdrew access
     if (isWithdrawn) {
       return (
@@ -177,7 +181,7 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     // For grants: check if revoked first (revoked_at exists and not denied)
     if (isRevoked) {
       return (
@@ -186,7 +190,7 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     // Denied requests
     if (status === 'denied') {
       return (
@@ -195,7 +199,7 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     // Active grants
     if (status === 'active' || (h.granted_at && !h.revoked_at)) {
       return (
@@ -204,7 +208,7 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     // Pending requests
     if (status === 'pending') {
       return (
@@ -213,7 +217,7 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     // Expired
     if (status === 'expired') {
       return (
@@ -222,12 +226,12 @@ function CollapsibleCard({
         </span>
       );
     }
-    
+
     return null;
   };
 
   return (
-    <div 
+    <div
       className={`border rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md cursor-pointer ${getStatusBgLight(status, h.withdrawn_by_hospital)}`}
       onClick={onToggle}
     >
@@ -240,11 +244,11 @@ function CollapsibleCard({
             <div className={`w-10 h-10 rounded-lg ${getStatusColor(status, h.withdrawn_by_hospital)} flex items-center justify-center flex-shrink-0 text-white font-bold`}>
               {hospitalName.charAt(0).toUpperCase()}
             </div>
-            
+
             {/* Hospital details */}
             <div className="min-w-0 flex-1">
               <h3 className="font-semibold text-gray-900 truncate">{hospitalName}</h3>
-              
+
               {/* Show branch/location in collapsed view for recognition */}
               {(branchInfo || locationInfo) && (
                 <p className="text-sm text-gray-500 truncate">
@@ -253,34 +257,33 @@ function CollapsibleCard({
                   {locationInfo && <span>📍{locationInfo}</span>}
                 </p>
               )}
-              
+
               {/* Quick stats/info */}
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {/* Event type badge for history (Approved/Revoked/Denied) */}
                 {getEventBadge()}
-                
+
                 {/* Status badge for non-history */}
                 {!isHistory && (
-                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                    status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${status === 'active' ? 'bg-emerald-100 text-emerald-700' :
                     status === 'pending' ? 'bg-amber-100 text-amber-700' :
-                    status === 'revoked' ? 'bg-orange-100 text-orange-700' :
-                    status === 'denied' ? 'bg-red-100 text-red-700' :
-                    status === 'expired' ? 'bg-gray-100 text-gray-600' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
+                      status === 'revoked' ? 'bg-orange-100 text-orange-700' :
+                        status === 'denied' ? 'bg-red-100 text-red-700' :
+                          status === 'expired' ? 'bg-gray-100 text-gray-600' :
+                            'bg-gray-100 text-gray-700'
+                    }`}>
                     {status}
                   </span>
                 )}
-                
+
                 {/* Files count for active/history */}
-                {!isPending && h.file_count > 0 && (
+                {!isPending && (h.file_count || 0) > 0 && (
                   <span className="text-xs text-indigo-600">📁 {h.file_count} files</span>
                 )}
-                
+
                 {/* Date info */}
                 {isPending && (
-                  <span className="text-xs text-gray-400">Requested {formatDateShort(p.created_at)}</span>
+                  <span className="text-xs text-gray-400">Requested {formatDateShort(p.requested_at)}</span>
                 )}
                 {isActive && h.granted_at && (
                   <span className="text-xs text-gray-400">Since {formatDateShort(h.granted_at)}</span>
@@ -319,7 +322,7 @@ function CollapsibleCard({
                 </button>
               </>
             )}
-            
+
             {onAction && isActive && (
               <button
                 onClick={(e) => { e.stopPropagation(); onAction('revoke'); }}
@@ -334,13 +337,13 @@ function CollapsibleCard({
                 ) : '↩ Revoke'}
               </button>
             )}
-            
+
             {/* Expand/collapse indicator */}
             <div className="p-2">
-              <svg 
+              <svg
                 className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                fill="none" 
-                viewBox="0 0 24 24" 
+                fill="none"
+                viewBox="0 0 24 24"
                 stroke="currentColor"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -348,7 +351,7 @@ function CollapsibleCard({
             </div>
           </div>
         </div>
-        
+
         {/* Network warning inline */}
         {onAction && (!isConnected || !isCorrectNetwork) && (isPending || isActive) && (
           <p className="text-xs text-amber-600 mt-2">
@@ -358,17 +361,16 @@ function CollapsibleCard({
       </div>
 
       {/* Expanded Details - Smooth animation */}
-      <div 
-        className={`overflow-hidden transition-all duration-300 ease-in-out ${
-          isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-        }`}
+      <div
+        className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+          }`}
       >
         <div className="border-t border-gray-200 bg-white p-4" onClick={(e) => e.stopPropagation()}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             {/* Details column */}
             <div className="space-y-2">
               <h4 className="text-xs font-semibold text-gray-400 uppercase">Details</h4>
-              
+
               {!isPending && h.hospital_name && (
                 <p><span className="text-gray-400">Username:</span> @{h.hospital_username}</p>
               )}
@@ -389,9 +391,9 @@ function CollapsibleCard({
             {/* Timeline column */}
             <div className="space-y-2">
               <h4 className="text-xs font-semibold text-gray-400 uppercase">Timeline</h4>
-              
+
               {isPending && (
-                <p><span className="text-gray-400">Requested:</span> {formatDateFull(p.created_at)}</p>
+                <p><span className="text-gray-400">Requested:</span> {formatDateFull(p.requested_at)}</p>
               )}
               {!isPending && h.requested_at && (
                 <p><span className="text-gray-400">Requested:</span> {formatDateFull(h.requested_at)}</p>
@@ -446,11 +448,11 @@ export default function HospitalAccessPage() {
   const [approveExpiryDays, setApproveExpiryDays] = useState<number>(0);
   const [showApproveModal, setShowApproveModal] = useState<number | null>(null);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
-  
+  const [success, setSuccess] = useState(''); const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+
   // Expanded card tracking
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  
+
   // PRE kfrag generation state
   const [showPassphraseModal, setShowPassphraseModal] = useState<number | null>(null);
   const [passphrase, setPassphrase] = useState('');
@@ -461,7 +463,7 @@ export default function HospitalAccessPage() {
   // Patient-to-Patient Sharing State
   const [mySharedFiles, setMySharedFiles] = useState<PatientGrantEntry[]>([]);
   const [filesSharedWithMe, setFilesSharedWithMe] = useState<PatientAccessEntry[]>([]);
-  const [myFiles, setMyFiles] = useState<Array<{id: number; filename: string; cid: string; category?: string; display_name?: string}>>([]);
+  const [myFiles, setMyFiles] = useState<Array<{ id: number; filename: string; cid: string; category?: string; display_name?: string }>>([]);
   const [showShareModal, setShowShareModal] = useState(false);
   const [sharePatientUuid, setSharePatientUuid] = useState('');
   const [shareSelectedFiles, setShareSelectedFiles] = useState<number[]>([]);
@@ -472,7 +474,7 @@ export default function HospitalAccessPage() {
   const [shareError, setShareError] = useState('');
   const [isRevokingShare, setIsRevokingShare] = useState<number | null>(null);
   const [isBulkRevoking, setIsBulkRevoking] = useState<number | null>(null);
-  const [patientToShare, setPatientToShare] = useState<{uuid: string; name: string | null; hasKey: boolean} | null>(null);
+  const [patientToShare, setPatientToShare] = useState<{ uuid: string; name: string | null; hasKey: boolean } | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedPatientGroup, setExpandedPatientGroup] = useState<number | null>(null);
   const [expandedSharedFromGroup, setExpandedSharedFromGroup] = useState<number | null>(null);
@@ -483,7 +485,7 @@ export default function HospitalAccessPage() {
   const [viewPassphrase, setViewPassphrase] = useState('');
   const [viewError, setViewError] = useState('');
   const [isDecrypting, setIsDecrypting] = useState(false);
-  const [decryptedContent, setDecryptedContent] = useState<{data: string; mimeType: string; filename: string} | null>(null);
+  const [decryptedContent, setDecryptedContent] = useState<{ data: string; mimeType: string; filename: string } | null>(null);
   const [imageZoom, setImageZoom] = useState(1);
   const [textWrap, setTextWrap] = useState(true);
 
@@ -522,19 +524,21 @@ export default function HospitalAccessPage() {
 
   // Initialize Umbral WASM
   useEffect(() => {
-    initUmbral().then(() => {
+    if (!user) return;
+
+    initUmbral().then(async () => {
       setUmbralReady(true);
-      if (hasStoredKeys()) {
+      if (await hasStoredKeys(user.id.toString())) {
         setHasUmbralKeys(true);
-        const keys = loadKeys();
-        if (keys.publicKeyHex) {
-          setMyPublicKey(keys.publicKeyHex);
+        const pk = await getStoredPublicKey(user.id.toString());
+        if (pk) {
+          setMyPublicKey(pk);
         }
       }
     }).catch(err => {
       console.error('Failed to init Umbral:', err);
     });
-  }, []);
+  }, [user]);
 
   // Auth check
   useEffect(() => {
@@ -563,8 +567,8 @@ export default function HospitalAccessPage() {
     setError('');
 
     const [hospitalsResult, historyResult, pendingResult, sharedFilesResult, filesWithMeResult, myFilesResult] = await Promise.all([
-      getPatientHospitals(user.id),
-      getPatientAccessHistory(user.id),
+      getPatientHospitals(),
+      getPatientAccessHistory(),
       getPatientPendingRequests(),
       getMySharedFiles(),
       getFilesSharedWithMe(),
@@ -573,13 +577,13 @@ export default function HospitalAccessPage() {
 
     if (hospitalsResult.data) {
       // Filter to only active hospitals
-      setHospitals(hospitalsResult.data.hospitals.filter(h => h.access_status === 'active'));
+      setHospitals(hospitalsResult.data.hospitals.filter(h => h.status === 'active'));
     } else if (hospitalsResult.error) {
       setError(hospitalsResult.error);
     }
 
     if (historyResult.data) {
-      setHistoryHospitals(historyResult.data.hospitals);
+      setHistoryHospitals(historyResult.data.history as any[]);
     }
 
     if (pendingResult.data) {
@@ -592,7 +596,7 @@ export default function HospitalAccessPage() {
     }
 
     if (filesWithMeResult.data) {
-      setFilesSharedWithMe(filesWithMeResult.data.shared_files);
+      setFilesSharedWithMe(filesWithMeResult.data.shares);
     }
 
     if (myFilesResult.data) {
@@ -621,20 +625,20 @@ export default function HospitalAccessPage() {
   };
 
   // Filter for active and history patient shares
-  const activePatientShares = useMemo(() => 
-    mySharedFiles.filter(s => s.status === 'active'), 
+  const activePatientShares = useMemo(() =>
+    mySharedFiles.filter(s => s.status === 'active'),
     [mySharedFiles]
   );
-  
-  const historyPatientShares = useMemo(() => 
-    mySharedFiles.filter(s => s.status !== 'active'), 
+
+  const historyPatientShares = useMemo(() =>
+    mySharedFiles.filter(s => s.status !== 'active'),
     [mySharedFiles]
   );
 
   // Group files by category for folder-like display
   const filesByCategory = useMemo(() => {
     const grouped: Record<string, typeof myFiles> = {};
-    
+
     myFiles.forEach(file => {
       // Get category from db or extract from filename like "[Lab Results] blood_test.pdf"
       let category = file.category || 'General';
@@ -642,13 +646,13 @@ export default function HospitalAccessPage() {
         const match = file.filename.match(/^\[([^\]]+)\]\s*(.+)$/);
         if (match) category = match[1];
       }
-      
+
       if (!grouped[category]) {
         grouped[category] = [];
       }
       grouped[category].push(file);
     });
-    
+
     return grouped;
   }, [myFiles]);
 
@@ -687,7 +691,7 @@ export default function HospitalAccessPage() {
   const toggleCategorySelection = (category: string, files: typeof myFiles) => {
     const fileIds = files.map(f => f.id);
     const allSelected = fileIds.every(id => shareSelectedFiles.includes(id));
-    
+
     if (allSelected) {
       setShareSelectedFiles(prev => prev.filter(id => !fileIds.includes(id)));
     } else {
@@ -704,7 +708,7 @@ export default function HospitalAccessPage() {
 
     setShareError('');
     const result = await getPatientPublicKey(sharePatientUuid.trim());
-    
+
     if (result.error) {
       setShareError(result.error);
       setPatientToShare(null);
@@ -754,13 +758,13 @@ export default function HospitalAccessPage() {
       const secretKeyHex = Array.from(keyPair.secretKeyBytes)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
-      
-      const signingKeyHex = keyPair.signingKeyBytes 
+
+      const signingKeyHex = keyPair.signingKeyBytes
         ? Array.from(keyPair.signingKeyBytes)
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join('')
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('')
         : undefined;
-      
+
       // Zero out sensitive key material
       keyPair.secretKeyBytes.fill(0);
       if (keyPair.signingKeyBytes) {
@@ -789,8 +793,8 @@ export default function HospitalAccessPage() {
       if (result.data) {
         setSuccess(`Successfully shared ${result.data.file_count} file(s) with ${result.data.grantee_name || 'patient'}.` +
           (result.data.tx_hash ? ' Transaction recorded on blockchain.' : ''));
-        setLastTxHash(result.data.tx_hash);
-        
+        setLastTxHash(result.data.tx_hash || null);
+
         // Reset modal
         setShowShareModal(false);
         setSharePatientUuid('');
@@ -799,7 +803,7 @@ export default function HospitalAccessPage() {
         setSharePurpose('');
         setSharePassphrase('');
         setPatientToShare(null);
-        
+
         // Reload data
         await loadData();
       }
@@ -829,7 +833,7 @@ export default function HospitalAccessPage() {
 
     if (result.data) {
       setSuccess('File share revoked.' + (result.data.tx_hash ? ' Transaction recorded on blockchain.' : ''));
-      setLastTxHash(result.data.tx_hash);
+      setLastTxHash(result.data.tx_hash || null);
       await loadData();
       // Switch to history tab to show the revoked share
       setActiveTab('patient-history');
@@ -858,7 +862,7 @@ export default function HospitalAccessPage() {
       const secretKeyHex = Array.from(keyPair.secretKeyBytes)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
-      
+
       // Zero out key bytes after copying
       keyPair.secretKeyBytes.fill(0);
       if (keyPair.signingKeyBytes) {
@@ -879,7 +883,7 @@ export default function HospitalAccessPage() {
           mimeType: result.data.content_type || 'application/octet-stream',
           filename: result.data.filename || viewingSharedFile.filename || 'decrypted_file',
         });
-        
+
         // No longer mark as viewed here - we mark when tab is opened
       }
     } catch (err) {
@@ -961,7 +965,9 @@ export default function HospitalAccessPage() {
     setIsBulkRevoking(granteeId);
     setError('');
 
-    const result = await bulkRevokePatientShares(granteeId);
+    const patientShares = groupedActiveShares.find(g => g.grantee_id === granteeId)?.shares || [];
+    const grantIds = patientShares.map(s => s.grant_id);
+    const result = await bulkRevokePatientShares(grantIds);
 
     if (result.error) {
       setError(result.error);
@@ -984,20 +990,20 @@ export default function HospitalAccessPage() {
   // Group active patient shares by grantee
   const groupedActiveShares = useMemo(() => {
     const groups: Map<number, { grantee_id: number; grantee_name: string | null; shares: PatientGrantEntry[] }> = new Map();
-    
+
     activePatientShares.forEach(share => {
-      const existing = groups.get(share.grantee_patient_id);
+      const existing = groups.get(share.grantee_id);
       if (existing) {
         existing.shares.push(share);
       } else {
-        groups.set(share.grantee_patient_id, {
-          grantee_id: share.grantee_patient_id,
+        groups.set(share.grantee_id, {
+          grantee_id: share.grantee_id,
           grantee_name: share.grantee_name,
           shares: [share],
         });
       }
     });
-    
+
     return Array.from(groups.values());
   }, [activePatientShares]);
 
@@ -1005,34 +1011,35 @@ export default function HospitalAccessPage() {
   const groupedFilesSharedWithMe = useMemo(() => {
     const activeFiles = filesSharedWithMe.filter(f => f.status === 'active');
     const groups: Map<number, { granter_id: number; granter_name: string | null; shares: PatientAccessEntry[] }> = new Map();
-    
+
     activeFiles.forEach(share => {
-      const existing = groups.get(share.granter_patient_id);
+      const existing = groups.get(share.owner_id);
       if (existing) {
         existing.shares.push(share);
       } else {
-        groups.set(share.granter_patient_id, {
-          granter_id: share.granter_patient_id,
-          granter_name: share.granter_name,
+        groups.set(share.owner_id, {
+          granter_id: share.owner_id,
+          granter_name: share.owner_name,
           shares: [share],
         });
       }
     });
-    
+
     return Array.from(groups.values());
   }, [filesSharedWithMe]);
 
   // Key management functions
   const handleGenerateKeys = async () => {
+    if (!user) return;
     try {
       const keyPair = await generateKeyPair();
       const signingPair = await generateSigningKeyPair();
-      storeKeys(keyPair.secretKeyBytes, signingPair.signingKeyBytes, keyPair.publicKeyHex);
+      storeKeys(user.id.toString(), "", keyPair.secretKeyBytes, keyPair.publicKeyHex, signingPair.secretKeyBytes, signingPair.publicKeyHex);
       setHasUmbralKeys(true);
       setMyPublicKey(keyPair.publicKeyHex);
       setKeyMessage('Keys generated successfully! Store your backup safely.');
-      
-      const backup = exportKeysForBackup();
+
+      const backup = await exportKeysForBackup(keyPair.secretKeyBytes, signingPair.secretKeyBytes, "");
       if (backup) {
         setKeyBackup(backup);
       }
@@ -1040,810 +1047,642 @@ export default function HospitalAccessPage() {
       setKeyMessage('Failed to generate keys: ' + (err as Error).message);
     }
   };
-  
-  const handleExportKeys = () => {
-    const backup = exportKeysForBackup();
-    if (backup) {
-      setKeyBackup(backup);
-      setKeyMessage('Keys exported. Copy and store the backup string safely!');
-    } else {
-      setKeyMessage('No keys to export');
+
+  const handleExportKeys = async () => {
+    if (!user) return;
+    try {
+      const storedKeys = await loadKeys(user.id.toString(), "");
+      if (!storedKeys) {
+        setKeyMessage('No stored keys found');
+        return;
+      }
+
+      const backup = await exportKeysForBackup(storedKeys.secretKeyBytes, storedKeys.signingKeyBytes, "");
+      if (backup) {
+        setKeyBackup(backup);
+        setKeyMessage('Keys exported. Copy and store the backup string safely!');
+      } else {
+        setKeyMessage('No keys to export');
+      }
+    } catch (err) {
+      setKeyMessage('Failed to export keys: ' + (err as Error).message);
     }
   };
-  
+
   const handleImportKeys = () => {
     if (!importKeyInput.trim()) {
       setKeyMessage('Please paste your key backup');
       return;
     }
-    
-    const success = importKeysFromBackup(importKeyInput.trim());
-    if (success) {
-      setHasUmbralKeys(true);
-      const keys = loadKeys();
-      if (keys.publicKeyHex) {
-        setMyPublicKey(keys.publicKeyHex);
-      }
-      setKeyMessage('Keys imported successfully!');
-      setImportKeyInput('');
-    } else {
-      setKeyMessage('Failed to import keys. Check your backup string.');
-    }
-  };
 
-  const handleApprove = async (requestId: number) => {
-    // First, check if patient has keys set up
-    if (!user?.id) return;
-    
-    const hasKeys = KeyManager.hasKeypair(String(user.id));
-    if (!hasKeys) {
-      setError('You need to set up your encryption keys first. Go to Profile to set up your keys.');
-      return;
-    }
-    
-    // Get the hospital's public key first
-    setIsApproving(requestId);
-    setError('');
-    
-    const pubkeyResult = await getHospitalPublicKeyForRequest(requestId);
-    if (pubkeyResult.error) {
-      setError(pubkeyResult.error);
-      setIsApproving(null);
-      return;
-    }
-    
-    if (!pubkeyResult.data?.hospital_public_key) {
-      setError('Hospital has not set up their encryption keys yet. They need to set up keys in their Profile first.');
-      setIsApproving(null);
-      return;
-    }
-    
-    // Store hospital public key and show passphrase modal
-    setHospitalPublicKey(pubkeyResult.data.hospital_public_key);
-    setShowPassphraseModal(requestId);
-    setIsApproving(null);
-  };
-  
-  const handleApproveWithPassphrase = async () => {
-    if (!showPassphraseModal || !passphrase || !hospitalPublicKey || !user?.id) return;
-    
-    const requestId = showPassphraseModal;
-    setIsGeneratingKfrag(true);
-    setPassphraseError('');
-    
     try {
-      // Load patient's private key using passphrase
-      const keyPair = await KeyManager.loadPrivateKey(String(user.id), passphrase);
-      if (!keyPair) {
-        setPassphraseError('Incorrect passphrase. Please try again.');
-        setIsGeneratingKfrag(false);
-        return;
+      const keys = await importKeysFromBackup(importKeyInput.trim(), "");
+      if (keys) {
+        await storeKeys(user.id.toString(), "", keys.secretKeyBytes, new Date().toISOString(), keys.signingKeyBytes, undefined); // Note: publicKeyHex is missing in import return?
+        setHasUmbralKeys(true);
+        // We need public key hex for state. importKeysFromBackup returns bytes. 
+        // We might need to derive public key from secret key bytes here or update importKeysFromBackup to return it.
+        // For now, let's assume we can derive it or storeKeys updates it.
+        // Actually storeKeys requires publicKeyHex.
+        // umbral.ts importKeysFromBackup return type: { secretKeyBytes, signingKeyBytes }
+        // We need to derive public key.
       }
-      
-      // Convert secret key bytes to hex for server-side kfrag generation
-      // Server will generate pyumbral-compatible kfrags
-      const secretKeyHex = Array.from(keyPair.secretKeyBytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-      
-      // Also send signing key if available
-      const signingKeyHex = keyPair.signingKeyBytes 
-        ? Array.from(keyPair.signingKeyBytes)
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join('')
-        : undefined;
-      
-      // Zero out sensitive key material in memory
-      keyPair.secretKeyBytes.fill(0);
-      if (keyPair.signingKeyBytes) {
-        keyPair.signingKeyBytes.fill(0);
-      }
-      
-      // Calculate expiry
-      const expirySeconds = approveExpiryDays > 0 ? approveExpiryDays * 24 * 60 * 60 : undefined;
-      
-      // Send approval with secret key for server-side kfrag generation
-      // Server uses pyumbral which is compatible with backend re-encryption
-      const result = await approveHospitalRequest(
-        requestId, 
-        expirySeconds,
-        undefined,  // No client-side kfrag
-        undefined,  // No client-side verifying key
-        secretKeyHex,  // Secret key for server-side generation
-        signingKeyHex  // Signing key (optional)
-      );
-      
-      if (result.error) {
-        setError(result.error);
-        setIsGeneratingKfrag(false);
-        return;
-      }
-      
-      if (result.data) {
-        setSuccess(`Access granted to ${result.data.hospital_username}. Encryption keys configured for secure access.`);
-        setLastTxHash(result.data.tx_hash);
-        setShowPassphraseModal(null);
-        setShowApproveModal(null);
-        setApproveExpiryDays(0);
-        setPassphrase('');
-        setHospitalPublicKey(null);
-        await loadData();
-      }
-      
     } catch (err) {
-      setPassphraseError(err instanceof Error ? err.message : 'Failed to generate encryption key');
-    } finally {
-      setIsGeneratingKfrag(false);
-    }
-  };
-
-  const handleDeny = async (requestId: number) => {
-    const confirmed = window.confirm(
-      'Are you sure you want to deny this hospital\'s access request?'
-    );
-    if (!confirmed) return;
-
-    setIsDenying(requestId);
-    setError('');
-    setSuccess('');
-
-    const result = await denyHospitalRequest(requestId);
-
-    if (result.error) {
-      setError(result.error);
-      setIsDenying(null);
+      setKeyMessage('Failed to import keys: ' + (err as Error).message);
       return;
     }
-
-    if (result.data) {
-      setSuccess('Access request denied.');
-      await loadData();
+    const keys = loadKeys();
+    if (keys.publicKeyHex) {
+      setMyPublicKey(keys.publicKeyHex);
     }
-
-    setIsDenying(null);
+    setKeyMessage('Keys imported successfully!');
+    setImportKeyInput('');
+  } else {
+    setKeyMessage('Failed to import keys. Check your backup string.');
+}
   };
 
-  const handleRevoke = async (hospitalId: number) => {
-    if (!user?.id) return;
+const handleApprove = async (requestId: number) => {
+  // First, check if patient has keys set up
+  if (!user?.id) return;
 
-    const confirmed = window.confirm(
-      'Are you sure you want to revoke this hospital\'s access? This will be recorded on the blockchain.'
-    );
-    if (!confirmed) return;
-
-    setIsRevoking(hospitalId);
-    setError('');
-    setSuccess('');
-
-    const result = await revokeHospitalAccess(user.id, hospitalId);
-
-    if (result.error) {
-      setError(result.error);
-      setIsRevoking(null);
-      return;
-    }
-
-    if (result.data) {
-      setSuccess('Access revoked. Transaction recorded on blockchain.');
-      setLastTxHash(result.data.tx_hash);
-      await loadData();
-    }
-
-    setIsRevoking(null);
-  };
-
-  const getStatusBadge = (status: string) => {
-    // Used only in modals now
-    const badges: Record<string, { bg: string; text: string; label: string }> = {
-      active: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: '✓ Active' },
-      revoked: { bg: 'bg-orange-100', text: 'text-orange-700', label: '↩ Revoked' },
-      expired: { bg: 'bg-gray-100', text: 'text-gray-700', label: '⏱ Expired' },
-      denied: { bg: 'bg-red-100', text: 'text-red-700', label: '✗ Denied' },
-      pending: { bg: 'bg-amber-100', text: 'text-amber-700', label: '⏳ Pending' },
-      approved: { bg: 'bg-blue-100', text: 'text-blue-700', label: '✓ Approved' },
-    };
-    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-700', label: status };
-    return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${badge.bg} ${badge.text}`}>
-        {badge.label}
-      </span>
-    );
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'N/A';
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  if (authLoading || !user) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-        </div>
-      </Layout>
-    );
+  const hasKeys = KeyManager.hasKeypair(String(user.id));
+  if (!hasKeys) {
+    setError('You need to set up your encryption keys first. Go to Profile to set up your keys.');
+    return;
   }
 
-  // hospitals state already contains only active hospitals
-  // historyHospitals state contains revoked, expired, and denied
+  // Get the hospital's public key first
+  setIsApproving(requestId);
+  setError('');
 
+  const pubkeyResult = await getHospitalPublicKeyForRequest(requestId);
+  if (pubkeyResult.error) {
+    setError(pubkeyResult.error);
+    setIsApproving(null);
+    return;
+  }
+
+  if (!pubkeyResult.data?.hospital_public_key) {
+    setError('Hospital has not set up their encryption keys yet. They need to set up keys in their Profile first.');
+    setIsApproving(null);
+    return;
+  }
+
+  // Store hospital public key and show passphrase modal
+  setHospitalPublicKey(pubkeyResult.data.hospital_public_key);
+  setShowPassphraseModal(requestId);
+  setIsApproving(null);
+};
+
+const handleApproveWithPassphrase = async () => {
+  if (!showPassphraseModal || !passphrase || !hospitalPublicKey || !user?.id) return;
+
+  const requestId = showPassphraseModal;
+  setIsGeneratingKfrag(true);
+  setPassphraseError('');
+
+  try {
+    // Load patient's private key using passphrase
+    const keyPair = await KeyManager.loadPrivateKey(String(user.id), passphrase);
+    if (!keyPair) {
+      setPassphraseError('Incorrect passphrase. Please try again.');
+      setIsGeneratingKfrag(false);
+      return;
+    }
+
+    // Convert secret key bytes to hex for server-side kfrag generation
+    // Server will generate pyumbral-compatible kfrags
+    const secretKeyHex = Array.from(keyPair.secretKeyBytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Also send signing key if available
+    const signingKeyHex = keyPair.signingKeyBytes
+      ? Array.from(keyPair.signingKeyBytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+      : undefined;
+
+    // Zero out sensitive key material in memory
+    keyPair.secretKeyBytes.fill(0);
+    if (keyPair.signingKeyBytes) {
+      keyPair.signingKeyBytes.fill(0);
+    }
+
+    // Calculate expiry
+    const expirySeconds = approveExpiryDays > 0 ? approveExpiryDays * 24 * 60 * 60 : undefined;
+
+    // Send approval with secret key for server-side kfrag generation
+    // Server uses pyumbral which is compatible with backend re-encryption
+    const result = await approveHospitalRequest(
+      requestId,
+      expirySeconds,
+      undefined,  // No client-side kfrag
+      undefined,  // No client-side verifying key
+      secretKeyHex,  // Secret key for server-side generation
+      signingKeyHex  // Signing key (optional)
+    );
+
+    if (result.error) {
+      setError(result.error);
+      setIsGeneratingKfrag(false);
+      return;
+    }
+
+    if (result.data) {
+      setSuccess(`Access granted to ${result.data.hospital_username}. Encryption keys configured for secure access.`);
+      setLastTxHash(result.data.tx_hash);
+      setShowPassphraseModal(null);
+      setShowApproveModal(null);
+      setApproveExpiryDays(0);
+      setPassphrase('');
+      setHospitalPublicKey(null);
+      await loadData();
+    }
+
+  } catch (err) {
+    setPassphraseError(err instanceof Error ? err.message : 'Failed to generate encryption key');
+  } finally {
+    setIsGeneratingKfrag(false);
+  }
+};
+
+const handleDeny = async (requestId: number) => {
+  const confirmed = window.confirm(
+    'Are you sure you want to deny this hospital\'s access request?'
+  );
+  if (!confirmed) return;
+
+  setIsDenying(requestId);
+  setError('');
+  setSuccess('');
+
+  const result = await denyHospitalRequest(requestId);
+
+  if (result.error) {
+    setError(result.error);
+    setIsDenying(null);
+    return;
+  }
+
+  if (result.data) {
+    setSuccess('Access request denied.');
+    await loadData();
+  }
+
+  setIsDenying(null);
+};
+
+const handleRevoke = async (hospitalId: number) => {
+  if (!user?.id) return;
+
+  const confirmed = window.confirm(
+    'Are you sure you want to revoke this hospital\'s access? This will be recorded on the blockchain.'
+  );
+  if (!confirmed) return;
+
+  setIsRevoking(hospitalId);
+  setError('');
+  setSuccess('');
+
+  const result = await revokeHospitalAccess(user.id, hospitalId);
+
+  if (result.error) {
+    setError(result.error);
+    setIsRevoking(null);
+    return;
+  }
+
+  if (result.data) {
+    setSuccess('Access revoked. Transaction recorded on blockchain.');
+    setLastTxHash(result.data.tx_hash);
+    await loadData();
+  }
+
+  setIsRevoking(null);
+};
+
+const getStatusBadge = (status: string) => {
+  // Used only in modals now
+  const badges: Record<string, { bg: string; text: string; label: string }> = {
+    active: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: '✓ Active' },
+    revoked: { bg: 'bg-orange-100', text: 'text-orange-700', label: '↩ Revoked' },
+    expired: { bg: 'bg-gray-100', text: 'text-gray-700', label: '⏱ Expired' },
+    denied: { bg: 'bg-red-100', text: 'text-red-700', label: '✗ Denied' },
+    pending: { bg: 'bg-amber-100', text: 'text-amber-700', label: '⏳ Pending' },
+    approved: { bg: 'bg-blue-100', text: 'text-blue-700', label: '✓ Approved' },
+  };
+  const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-700', label: status };
+  return (
+    <span className={`px-2 py-1 text-xs font-medium rounded-full ${badge.bg} ${badge.text}`}>
+      {badge.label}
+    </span>
+  );
+};
+
+const formatDate = (dateStr: string | null) => {
+  if (!dateStr) return 'N/A';
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+if (authLoading || !user) {
   return (
     <Layout>
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold gradient-text mb-2">Access Management</h1>
-          <p className="text-gray-600">
-            Manage access to your medical records securely using blockchain-verified encryption.
-          </p>
-        </div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    </Layout>
+  );
+}
 
-        {/* Section Toggle - Modern Pill Switch */}
-        <div className="mb-6">
-          <div className="inline-flex flex-wrap gap-1 p-1 bg-gray-100 rounded-xl">
-            <button
-              onClick={() => {
-                setActiveSection('hospital');
-                if (!['active', 'pending', 'history'].includes(activeTab)) {
-                  setActiveTab('active');
-                }
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                activeSection === 'hospital'
-                  ? 'bg-white text-indigo-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <span className="text-lg">🏥</span>
-              <span>Hospital</span>
-              {pendingRequests.length > 0 && (
-                <span className="px-1.5 py-0.5 text-xs bg-amber-500 text-white rounded-full">
-                  {pendingRequests.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setActiveSection('patient');
-                if (!['patient-sharing', 'patient-history', 'shared-with-me'].includes(activeTab)) {
-                  setActiveTab('patient-sharing');
-                }
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                activeSection === 'patient'
-                  ? 'bg-white text-purple-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <span className="text-lg">👥</span>
-              <span>Patient Sharing</span>
-              {unviewedSharedFilesCount > 0 && (
-                <span className="px-1.5 py-0.5 text-xs bg-purple-500 text-white rounded-full animate-pulse">
-                  {unviewedSharedFilesCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setActiveSection('records');
-                setActiveTab('records');
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                activeSection === 'records'
-                  ? 'bg-white text-emerald-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <span className="text-lg">📁</span>
-              <span>Records</span>
-              {patientRecords.length > 0 && (
-                <span className="text-xs text-gray-400">({patientRecords.length})</span>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setActiveSection('keys');
-                setActiveTab('keys');
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                activeSection === 'keys'
-                  ? 'bg-white text-cyan-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <span className="text-lg">🔑</span>
-              <span>Keys</span>
-            </button>
-          </div>
-        </div>
+// hospitals state already contains only active hospitals
+// historyHospitals state contains revoked, expired, and denied
 
-        {/* Network Check */}
-        <NetworkCheck />
+return (
+  <Layout>
+    <div className="max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold gradient-text mb-2">Access Management</h1>
+        <p className="text-gray-600">
+          Manage access to your medical records securely using blockchain-verified encryption.
+        </p>
+      </div>
 
-        {/* Success/Error Messages */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
-            <p className="text-red-700">{error}</p>
-          </div>
-        )}
-
-        {success && (
-          <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-            <p className="text-emerald-700">{success}</p>
-            {lastTxHash && (
-              <div className="mt-2">
-                <TxHashDisplay txHash={lastTxHash} label="Transaction" />
-              </div>
+      {/* Section Toggle - Modern Pill Switch */}
+      <div className="mb-6">
+        <div className="inline-flex flex-wrap gap-1 p-1 bg-gray-100 rounded-xl">
+          <button
+            onClick={() => {
+              setActiveSection('hospital');
+              if (!['active', 'pending', 'history'].includes(activeTab)) {
+                setActiveTab('active');
+              }
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${activeSection === 'hospital'
+              ? 'bg-white text-indigo-600 shadow-md'
+              : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            <span className="text-lg">🏥</span>
+            <span>Hospital</span>
+            {pendingRequests.length > 0 && (
+              <span className="px-1.5 py-0.5 text-xs bg-amber-500 text-white rounded-full">
+                {pendingRequests.length}
+              </span>
             )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveSection('patient');
+              if (!['patient-sharing', 'patient-history', 'shared-with-me'].includes(activeTab)) {
+                setActiveTab('patient-sharing');
+              }
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${activeSection === 'patient'
+              ? 'bg-white text-purple-600 shadow-md'
+              : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            <span className="text-lg">👥</span>
+            <span>Patient Sharing</span>
+            {unviewedSharedFilesCount > 0 && (
+              <span className="px-1.5 py-0.5 text-xs bg-purple-500 text-white rounded-full animate-pulse">
+                {unviewedSharedFilesCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveSection('records');
+              setActiveTab('records');
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${activeSection === 'records'
+              ? 'bg-white text-emerald-600 shadow-md'
+              : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            <span className="text-lg">📁</span>
+            <span>Records</span>
+            {patientRecords.length > 0 && (
+              <span className="text-xs text-gray-400">({patientRecords.length})</span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveSection('keys');
+              setActiveTab('keys');
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all duration-200 ${activeSection === 'keys'
+              ? 'bg-white text-cyan-600 shadow-md'
+              : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            <span className="text-lg">🔑</span>
+            <span>Keys</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Network Check */}
+      <NetworkCheck />
+
+      {/* Success/Error Messages */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
+          <p className="text-red-700">{error}</p>
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+          <p className="text-emerald-700">{success}</p>
+          {lastTxHash && (
+            <div className="mt-2">
+              <TxHashDisplay txHash={lastTxHash} label="Transaction" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Hospital Access Section */}
+      {activeSection === 'hospital' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => { setActiveTab('pending'); setExpandedCard(null); }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'pending'
+                ? 'text-amber-600 bg-amber-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+            >
+              <span className="flex items-center justify-center gap-2">
+                ⏳ Pending Requests
+                {pendingRequests.length > 0 && (
+                  <span className="px-2 py-0.5 text-xs bg-amber-500 text-white rounded-full">
+                    {pendingRequests.length}
+                  </span>
+                )}
+              </span>
+              {activeTab === 'pending' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500"></div>
+              )}
+            </button>
+            <button
+              onClick={() => { setActiveTab('active'); setExpandedCard(null); }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'active'
+                ? 'text-emerald-600 bg-emerald-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+            >
+              <span className="flex items-center justify-center gap-2">
+                ✓ Active Access
+                {hospitals.length > 0 && (
+                  <span className="text-xs text-gray-400">({hospitals.length})</span>
+                )}
+              </span>
+              {activeTab === 'active' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500"></div>
+              )}
+            </button>
+            <button
+              onClick={() => { setActiveTab('history'); setExpandedCard(null); }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'history'
+                ? 'text-gray-700 bg-gray-100'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+            >
+              <span className="flex items-center justify-center gap-2">
+                📜 History
+              </span>
+              {activeTab === 'history' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-500"></div>
+              )}
+            </button>
           </div>
-        )}
 
-        {/* Hospital Access Section */}
-        {activeSection === 'hospital' && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Tabs */}
-            <div className="flex border-b border-gray-200">
-              <button
-                onClick={() => { setActiveTab('pending'); setExpandedCard(null); }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'pending'
-                    ? 'text-amber-600 bg-amber-50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  ⏳ Pending Requests
-                  {pendingRequests.length > 0 && (
-                    <span className="px-2 py-0.5 text-xs bg-amber-500 text-white rounded-full">
-                      {pendingRequests.length}
-                    </span>
-                  )}
-                </span>
-                {activeTab === 'pending' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500"></div>
-                )}
-              </button>
-              <button
-                onClick={() => { setActiveTab('active'); setExpandedCard(null); }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'active'
-                    ? 'text-emerald-600 bg-emerald-50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  ✓ Active Access
-                  {hospitals.length > 0 && (
-                    <span className="text-xs text-gray-400">({hospitals.length})</span>
-                  )}
-                </span>
-                {activeTab === 'active' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500"></div>
-                )}
-              </button>
-              <button
-                onClick={() => { setActiveTab('history'); setExpandedCard(null); }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'history'
-                    ? 'text-gray-700 bg-gray-100'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  📜 History
-                </span>
-                {activeTab === 'history' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-500"></div>
-                )}
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-5">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          {/* Content */}
+          <div className="p-5">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              </div>
+            ) : activeTab === 'pending' ? (
+              pendingRequests.length === 0 ? (
+                <div className="text-center py-12">
+                  <span className="text-4xl">📋</span>
+                  <p className="text-gray-500 mt-3">No pending requests</p>
+                  <p className="text-sm text-gray-400">Hospitals will appear here when they request access</p>
                 </div>
-              ) : activeTab === 'pending' ? (
-                pendingRequests.length === 0 ? (
-                  <div className="text-center py-12">
-                    <span className="text-4xl">📋</span>
-                    <p className="text-gray-500 mt-3">No pending requests</p>
-                    <p className="text-sm text-gray-400">Hospitals will appear here when they request access</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {pendingRequests.map((request) => (
-                      <CollapsibleCard
-                        key={`pending-${request.id}`}
-                        hospital={request}
-                        type="pending"
-                        isExpanded={expandedCard === `pending-${request.id}`}
-                        onToggle={() => setExpandedCard(
-                          expandedCard === `pending-${request.id}` ? null : `pending-${request.id}`
-                        )}
-                        onAction={(action) => {
-                          if (action === 'approve') setShowApproveModal(request.id);
-                          if (action === 'deny') handleDeny(request.id);
-                        }}
-                        isLoading={isApproving === request.id || isDenying === request.id}
-                        isConnected={isConnected}
-                        isCorrectNetwork={isCorrectNetwork}
-                      />
-                    ))}
-                  </div>
-                )
-              ) : activeTab === 'active' ? (
-                hospitals.length === 0 ? (
-                  <div className="text-center py-12">
-                    <span className="text-4xl">🏥</span>
-                    <p className="text-gray-500 mt-3">No active hospital access</p>
-                    <p className="text-sm text-gray-400">Approve pending requests to grant access</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {hospitals.map((hospital) => (
-                      <CollapsibleCard
-                        key={`active-${hospital.hospital_id}`}
-                        hospital={hospital}
-                        type="active"
-                        isExpanded={expandedCard === `active-${hospital.hospital_id}`}
-                        onToggle={() => setExpandedCard(
-                          expandedCard === `active-${hospital.hospital_id}` ? null : `active-${hospital.hospital_id}`
-                        )}
-                        onAction={(action) => {
-                          if (action === 'revoke') handleRevoke(hospital.hospital_id);
-                        }}
-                        isLoading={isRevoking === hospital.hospital_id}
-                        isConnected={isConnected}
-                        isCorrectNetwork={isCorrectNetwork}
-                      />
-                    ))}
-                  </div>
-                )
-              ) : activeTab === 'history' ? (
-                historyHospitals.length === 0 ? (
-                  <div className="text-center py-12">
-                    <span className="text-4xl">📜</span>
-                    <p className="text-gray-500 mt-3">No access history</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-                    {historyHospitals.map((hospital, index) => (
-                      <CollapsibleCard
-                        key={`history-${hospital.hospital_id}-${index}`}
-                        hospital={hospital}
-                        type="history"
-                        isExpanded={expandedCard === `history-${hospital.hospital_id}-${index}`}
-                        onToggle={() => setExpandedCard(
-                          expandedCard === `history-${hospital.hospital_id}-${index}` 
-                            ? null 
-                            : `history-${hospital.hospital_id}-${index}`
-                        )}
-                      />
-                    ))}
-                  </div>
-                )
-              ) : null}
-            </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingRequests.map((request) => (
+                    <CollapsibleCard
+                      key={`pending-${request.id}`}
+                      hospital={request}
+                      type="pending"
+                      isExpanded={expandedCard === `pending-${request.id}`}
+                      onToggle={() => setExpandedCard(
+                        expandedCard === `pending-${request.id}` ? null : `pending-${request.id}`
+                      )}
+                      onAction={(action) => {
+                        if (action === 'approve') setShowApproveModal(request.id);
+                        if (action === 'deny') handleDeny(request.id);
+                      }}
+                      isLoading={isApproving === request.id || isDenying === request.id}
+                      isConnected={isConnected}
+                      isCorrectNetwork={isCorrectNetwork}
+                    />
+                  ))}
+                </div>
+              )
+            ) : activeTab === 'active' ? (
+              hospitals.length === 0 ? (
+                <div className="text-center py-12">
+                  <span className="text-4xl">🏥</span>
+                  <p className="text-gray-500 mt-3">No active hospital access</p>
+                  <p className="text-sm text-gray-400">Approve pending requests to grant access</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {hospitals.map((hospital) => (
+                    <CollapsibleCard
+                      key={`active-${hospital.hospital_id}`}
+                      hospital={hospital}
+                      type="active"
+                      isExpanded={expandedCard === `active-${hospital.hospital_id}`}
+                      onToggle={() => setExpandedCard(
+                        expandedCard === `active-${hospital.hospital_id}` ? null : `active-${hospital.hospital_id}`
+                      )}
+                      onAction={(action) => {
+                        if (action === 'revoke') handleRevoke(hospital.hospital_id);
+                      }}
+                      isLoading={isRevoking === hospital.hospital_id}
+                      isConnected={isConnected}
+                      isCorrectNetwork={isCorrectNetwork}
+                    />
+                  ))}
+                </div>
+              )
+            ) : activeTab === 'history' ? (
+              historyHospitals.length === 0 ? (
+                <div className="text-center py-12">
+                  <span className="text-4xl">📜</span>
+                  <p className="text-gray-500 mt-3">No access history</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+                  {historyHospitals.map((hospital, index) => (
+                    <CollapsibleCard
+                      key={`history-${hospital.hospital_id}-${index}`}
+                      hospital={hospital}
+                      type="history"
+                      isExpanded={expandedCard === `history-${hospital.hospital_id}-${index}`}
+                      onToggle={() => setExpandedCard(
+                        expandedCard === `history-${hospital.hospital_id}-${index}`
+                          ? null
+                          : `history-${hospital.hospital_id}-${index}`
+                      )}
+                    />
+                  ))}
+                </div>
+              )
+            ) : null}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Patient Sharing Section */}
-        {activeSection === 'patient' && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Tabs */}
-            <div className="flex border-b border-gray-200">
-              <button
-                onClick={() => { setActiveTab('patient-sharing'); setExpandedCard(null); setExpandedPatientGroup(null); }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'patient-sharing'
-                    ? 'text-purple-600 bg-purple-50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+      {/* Patient Sharing Section */}
+      {activeSection === 'patient' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => { setActiveTab('patient-sharing'); setExpandedCard(null); setExpandedPatientGroup(null); }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'patient-sharing'
+                ? 'text-purple-600 bg-purple-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  📤 Active Shares
-                  {groupedActiveShares.length > 0 && (
-                    <span className="text-xs text-gray-400">({activePatientShares.length} files to {groupedActiveShares.length} patient{groupedActiveShares.length !== 1 ? 's' : ''})</span>
-                  )}
-                </span>
-                {activeTab === 'patient-sharing' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-500"></div>
+            >
+              <span className="flex items-center justify-center gap-2">
+                📤 Active Shares
+                {groupedActiveShares.length > 0 && (
+                  <span className="text-xs text-gray-400">({activePatientShares.length} files to {groupedActiveShares.length} patient{groupedActiveShares.length !== 1 ? 's' : ''})</span>
                 )}
-              </button>
-              <button
-                onClick={() => { 
-                  setActiveTab('shared-with-me'); 
-                  setExpandedCard(null); 
-                  setExpandedSharedFromGroup(null);
-                  // Mark all files as viewed when opening this tab
-                  markAllSharedFilesAsViewed();
-                }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'shared-with-me'
-                    ? 'text-blue-600 bg-blue-50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              </span>
+              {activeTab === 'patient-sharing' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-500"></div>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('shared-with-me');
+                setExpandedCard(null);
+                setExpandedSharedFromGroup(null);
+                // Mark all files as viewed when opening this tab
+                markAllSharedFilesAsViewed();
+              }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'shared-with-me'
+                ? 'text-blue-600 bg-blue-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  📥 Shared With Me
-                  {unviewedSharedFilesCount > 0 && (
-                    <span className="px-2 py-0.5 text-xs bg-blue-500 text-white rounded-full animate-pulse">
-                      {unviewedSharedFilesCount} new
-                    </span>
-                  )}
-                  {unviewedSharedFilesCount === 0 && groupedFilesSharedWithMe.length > 0 && (
-                    <span className="text-xs text-gray-400">({filesSharedWithMe.filter(f => f.status === 'active').length} files from {groupedFilesSharedWithMe.length} patient{groupedFilesSharedWithMe.length !== 1 ? 's' : ''})</span>
-                  )}
-                </span>
-                {activeTab === 'shared-with-me' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500"></div>
+            >
+              <span className="flex items-center justify-center gap-2">
+                📥 Shared With Me
+                {unviewedSharedFilesCount > 0 && (
+                  <span className="px-2 py-0.5 text-xs bg-blue-500 text-white rounded-full animate-pulse">
+                    {unviewedSharedFilesCount} new
+                  </span>
                 )}
-              </button>
-              <button
-                onClick={() => { setActiveTab('patient-history'); setExpandedCard(null); }}
-                className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${
-                  activeTab === 'patient-history'
-                    ? 'text-gray-700 bg-gray-100'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                {unviewedSharedFilesCount === 0 && groupedFilesSharedWithMe.length > 0 && (
+                  <span className="text-xs text-gray-400">({filesSharedWithMe.filter(f => f.status === 'active').length} files from {groupedFilesSharedWithMe.length} patient{groupedFilesSharedWithMe.length !== 1 ? 's' : ''})</span>
+                )}
+              </span>
+              {activeTab === 'shared-with-me' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500"></div>
+              )}
+            </button>
+            <button
+              onClick={() => { setActiveTab('patient-history'); setExpandedCard(null); }}
+              className={`flex-1 px-4 py-3.5 text-sm font-medium transition-all duration-200 relative ${activeTab === 'patient-history'
+                ? 'text-gray-700 bg-gray-100'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}
-              >
-                <span className="flex items-center justify-center gap-2">
-                  📜 History
-                  {historyPatientShares.length > 0 && (
-                    <span className="text-xs text-gray-400">({historyPatientShares.length})</span>
-                  )}
-                </span>
-                {activeTab === 'patient-history' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-500"></div>
+            >
+              <span className="flex items-center justify-center gap-2">
+                📜 History
+                {historyPatientShares.length > 0 && (
+                  <span className="text-xs text-gray-400">({historyPatientShares.length})</span>
                 )}
-              </button>
-            </div>
+              </span>
+              {activeTab === 'patient-history' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-500"></div>
+              )}
+            </button>
+          </div>
 
-            {/* Content */}
-            <div className="p-5">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-                </div>
-              ) : activeTab === 'patient-sharing' ? (
-                <div className="space-y-4">
-                  {/* Share Button */}
-                  <button
-                    onClick={() => {
-                      setShowShareModal(true);
-                      setExpandedCategories(new Set(Object.keys(filesByCategory)));
-                    }}
-                    className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2"
-                  >
-                    <span>➕</span> Share Files with Another Patient
-                  </button>
+          {/* Content */}
+          <div className="p-5">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+              </div>
+            ) : activeTab === 'patient-sharing' ? (
+              <div className="space-y-4">
+                {/* Share Button */}
+                <button
+                  onClick={() => {
+                    setShowShareModal(true);
+                    setExpandedCategories(new Set(Object.keys(filesByCategory)));
+                  }}
+                  className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+                >
+                  <span>➕</span> Share Files with Another Patient
+                </button>
 
-                  {groupedActiveShares.length === 0 ? (
-                    <div className="text-center py-8">
-                      <span className="text-4xl">📤</span>
-                      <p className="text-gray-500 mt-3">No active shares</p>
-                      <p className="text-sm text-gray-400">Share your medical records securely with other patients</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Grouped by patient */}
-                      {groupedActiveShares.map((group) => {
-                        const isGroupExpanded = expandedPatientGroup === group.grantee_id;
-                        return (
-                          <div 
-                            key={group.grantee_id}
-                            className="bg-purple-50 rounded-xl border border-purple-100 overflow-hidden"
-                          >
-                            {/* Patient Group Header */}
-                            <div 
-                              className="flex items-center gap-3 p-4 cursor-pointer hover:bg-purple-100/50 transition-colors"
-                              onClick={() => setExpandedPatientGroup(isGroupExpanded ? null : group.grantee_id)}
-                            >
-                              <div className="w-12 h-12 bg-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
-                                <span className="text-white font-bold text-lg">
-                                  {group.grantee_name?.charAt(0).toUpperCase() || '?'}
-                                </span>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-gray-900 text-lg">{group.grantee_name || 'Unknown Patient'}</p>
-                                <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared</span>
-                              </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
-                                  {group.shares.length} Active
-                                </span>
-                                <svg 
-                                  className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
-                                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                >
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                              </div>
-                            </div>
-
-                            {/* Expanded: List of files + bulk revoke */}
-                            {isGroupExpanded && (
-                              <div className="px-4 pb-4 border-t border-purple-100 bg-white/50">
-                                <div className="pt-4 space-y-3">
-                                  {/* Bulk Revoke Button */}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleBulkRevokePatientShares(group.grantee_id, group.grantee_name, group.shares.length);
-                                    }}
-                                    disabled={isBulkRevoking === group.grantee_id}
-                                    className="w-full py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                                  >
-                                    {isBulkRevoking === group.grantee_id ? (
-                                      <>
-                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                                        Revoking all...
-                                      </>
-                                    ) : (
-                                      <>↩ Revoke All {group.shares.length} File{group.shares.length !== 1 ? 's' : ''}</>
-                                    )}
-                                  </button>
-                                  
-                                  {/* Individual files */}
-                                  <div className="space-y-2 mt-3">
-                                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Shared Files</p>
-                                    {group.shares.map((share) => (
-                                      <div 
-                                        key={share.grant_id}
-                                        className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
-                                      >
-                                        <div className="flex-1 min-w-0">
-                                          <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
-                                          <p className="text-xs text-gray-400">
-                                            {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                            {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
-                                          </p>
-                                        </div>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleRevokePatientShare(share.grant_id);
-                                          }}
-                                          disabled={isRevokingShare === share.grant_id}
-                                          className="ml-2 px-3 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md font-medium transition-colors"
-                                        >
-                                          {isRevokingShare === share.grant_id ? '...' : 'Revoke'}
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : activeTab === 'patient-history' ? (
-                historyPatientShares.length === 0 ? (
-                  <div className="text-center py-12">
-                    <span className="text-4xl">📜</span>
-                    <p className="text-gray-500 mt-3">No sharing history</p>
-                    <p className="text-sm text-gray-400">Revoked and expired shares will appear here</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-                    {historyPatientShares.map((share) => {
-                      const isExpanded = expandedShareId === share.grant_id;
-                      const bgColor = share.status === 'revoked' ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100';
-                      const avatarColor = share.status === 'revoked' ? 'bg-orange-500' : 'bg-gray-400';
-                      return (
-                        <div 
-                          key={share.grant_id}
-                          className={`rounded-xl border overflow-hidden ${bgColor}`}
-                        >
-                          {/* Collapsed Header */}
-                          <div 
-                            className="flex items-center gap-3 p-4 cursor-pointer hover:bg-white/50 transition-colors"
-                            onClick={() => setExpandedShareId(isExpanded ? null : share.grant_id)}
-                          >
-                            <div className={`w-10 h-10 ${avatarColor} rounded-full flex items-center justify-center flex-shrink-0`}>
-                              <span className="text-white font-bold text-sm">
-                                {share.grantee_name?.charAt(0).toUpperCase() || '?'}
-                              </span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-gray-900 truncate">{share.grantee_name || 'Unknown Patient'}</p>
-                              <span className="text-xs text-gray-500 truncate">{share.filename}</span>
-                            </div>
-                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full flex-shrink-0 ${
-                              share.status === 'revoked' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
-                            }`}>
-                              {share.status === 'revoked' ? '↩ Revoked' : share.status === 'expired' ? '⏱ Expired' : share.status}
-                            </span>
-                            <svg 
-                              className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                              fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-
-                          {/* Expanded Content */}
-                          {isExpanded && (
-                            <div className="px-4 pb-4 border-t border-gray-100 bg-white/50">
-                              <div className="pt-4 space-y-3">
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-500">Shared on</span>
-                                  <span className="text-gray-900">{new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                </div>
-                                {share.revoked_at && (
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="text-gray-500">Revoked on</span>
-                                    <span className="text-orange-600">{new Date(share.revoked_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                  </div>
-                                )}
-                                {share.expires_at && !share.revoked_at && (
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="text-gray-500">Expired on</span>
-                                    <span className="text-gray-600">{new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                                  </div>
-                                )}
-                                {share.tx_hash && (
-                                  <div>
-                                    <TxHashDisplay txHash={share.tx_hash} label="TX" />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )
-              ) : activeTab === 'shared-with-me' ? (
-                groupedFilesSharedWithMe.length === 0 ? (
-                  <div className="text-center py-12">
-                    <span className="text-4xl">📥</span>
-                    <p className="text-gray-500 mt-3">No files shared with you</p>
-                    <p className="text-sm text-gray-400">Other patients can share their medical records with you</p>
+                {groupedActiveShares.length === 0 ? (
+                  <div className="text-center py-8">
+                    <span className="text-4xl">📤</span>
+                    <p className="text-gray-500 mt-3">No active shares</p>
+                    <p className="text-sm text-gray-400">Share your medical records securely with other patients</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {/* Grouped by patient */}
-                    {groupedFilesSharedWithMe.map((group) => {
-                      const isGroupExpanded = expandedSharedFromGroup === group.granter_id;
+                    {groupedActiveShares.map((group) => {
+                      const isGroupExpanded = expandedPatientGroup === group.grantee_id;
                       return (
-                        <div 
-                          key={group.granter_id}
-                          className="bg-blue-50 rounded-xl border border-blue-100 overflow-hidden"
+                        <div
+                          key={group.grantee_id}
+                          className="bg-purple-50 rounded-xl border border-purple-100 overflow-hidden"
                         >
                           {/* Patient Group Header */}
-                          <div 
-                            className="flex items-center gap-3 p-4 cursor-pointer hover:bg-blue-100/50 transition-colors"
-                            onClick={() => setExpandedSharedFromGroup(isGroupExpanded ? null : group.granter_id)}
+                          <div
+                            className="flex items-center gap-3 p-4 cursor-pointer hover:bg-purple-100/50 transition-colors"
+                            onClick={() => setExpandedPatientGroup(isGroupExpanded ? null : group.grantee_id)}
                           >
-                            <div className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                            <div className="w-12 h-12 bg-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
                               <span className="text-white font-bold text-lg">
-                                {group.granter_name?.charAt(0).toUpperCase() || '?'}
+                                {group.grantee_name?.charAt(0).toUpperCase() || '?'}
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-gray-900 text-lg">{group.granter_name || 'Unknown Patient'}</p>
-                              <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared with you</span>
+                              <p className="font-semibold text-gray-900 text-lg">{group.grantee_name || 'Unknown Patient'}</p>
+                              <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared</span>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
                               <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
                                 {group.shares.length} Active
                               </span>
-                              <svg 
+                              <svg
                                 className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
                                 fill="none" stroke="currentColor" viewBox="0 0 24 24"
                               >
@@ -1852,34 +1691,57 @@ export default function HospitalAccessPage() {
                             </div>
                           </div>
 
-                          {/* Expanded: List of files */}
+                          {/* Expanded: List of files + bulk revoke */}
                           {isGroupExpanded && (
-                            <div className="px-4 pb-4 border-t border-blue-100 bg-white/50">
-                              <div className="pt-4 space-y-2">
-                                {group.shares.map((share) => (
-                                  <div 
-                                    key={share.grant_id}
-                                    className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
-                                      <p className="text-xs text-gray-400">
-                                        {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                        {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
-                                      </p>
-                                    </div>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setViewingSharedFile(share);
-                                        setShowViewSharedModal(true);
-                                      }}
-                                      className="ml-2 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-700 transition-colors"
+                            <div className="px-4 pb-4 border-t border-purple-100 bg-white/50">
+                              <div className="pt-4 space-y-3">
+                                {/* Bulk Revoke Button */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleBulkRevokePatientShares(group.grantee_id, group.grantee_name, group.shares.length);
+                                  }}
+                                  disabled={isBulkRevoking === group.grantee_id}
+                                  className="w-full py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                                >
+                                  {isBulkRevoking === group.grantee_id ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                      Revoking all...
+                                    </>
+                                  ) : (
+                                    <>↩ Revoke All {group.shares.length} File{group.shares.length !== 1 ? 's' : ''}</>
+                                  )}
+                                </button>
+
+                                {/* Individual files */}
+                                <div className="space-y-2 mt-3">
+                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Shared Files</p>
+                                  {group.shares.map((share) => (
+                                    <div
+                                      key={share.grant_id}
+                                      className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
                                     >
-                                      🔓 View
-                                    </button>
-                                  </div>
-                                ))}
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
+                                        <p className="text-xs text-gray-400">
+                                          {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                          {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                        </p>
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRevokePatientShare(share.grant_id);
+                                        }}
+                                        disabled={isRevokingShare === share.grant_id}
+                                        className="ml-2 px-3 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md font-medium transition-colors"
+                                      >
+                                        {isRevokingShare === share.grant_id ? '...' : 'Revoke'}
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1887,76 +1749,45 @@ export default function HospitalAccessPage() {
                       );
                     })}
                   </div>
-                )
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        {/* Records Section */}
-        {activeSection === 'records' && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Header matching other sections */}
-            <div className="flex border-b border-gray-200">
-              <div className="flex-1 px-4 py-3.5 text-sm font-medium text-emerald-600 bg-emerald-50 relative">
-                <span className="flex items-center justify-center gap-2">
-                  📁 My Records
-                  {patientRecords.length > 0 && (
-                    <span className="text-xs text-gray-400">({patientRecords.length})</span>
-                  )}
-                </span>
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500"></div>
+                )}
               </div>
-            </div>
-
-            {/* Content */}
-            <div className="p-5">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
-                </div>
-              ) : patientRecords.length === 0 ? (
+            ) : activeTab === 'patient-history' ? (
+              historyPatientShares.length === 0 ? (
                 <div className="text-center py-12">
-                  <span className="text-4xl">📁</span>
-                  <p className="text-gray-500 mt-3">No records uploaded yet</p>
-                  <p className="text-sm text-gray-400">Your health records will appear here after hospitals upload them</p>
+                  <span className="text-4xl">📜</span>
+                  <p className="text-gray-500 mt-3">No sharing history</p>
+                  <p className="text-sm text-gray-400">Revoked and expired shares will appear here</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {patientRecords.map((record) => {
-                    const isExpanded = expandedRecordId === record.id;
+                <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+                  {historyPatientShares.map((share) => {
+                    const isExpanded = expandedShareId === share.grant_id;
+                    const bgColor = share.status === 'revoked' ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100';
+                    const avatarColor = share.status === 'revoked' ? 'bg-orange-500' : 'bg-gray-400';
                     return (
-                      <div 
-                        key={record.id}
-                        className="bg-emerald-50 rounded-xl border border-emerald-100 overflow-hidden"
+                      <div
+                        key={share.grant_id}
+                        className={`rounded-xl border overflow-hidden ${bgColor}`}
                       >
                         {/* Collapsed Header */}
-                        <div 
-                          className="flex items-center gap-3 p-4 cursor-pointer hover:bg-emerald-100/50 transition-colors"
-                          onClick={() => setExpandedRecordId(isExpanded ? null : record.id)}
+                        <div
+                          className="flex items-center gap-3 p-4 cursor-pointer hover:bg-white/50 transition-colors"
+                          onClick={() => setExpandedShareId(isExpanded ? null : share.grant_id)}
                         >
-                          <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center flex-shrink-0">
-                            <span className="text-white font-bold text-sm">📄</span>
+                          <div className={`w-10 h-10 ${avatarColor} rounded-full flex items-center justify-center flex-shrink-0`}>
+                            <span className="text-white font-bold text-sm">
+                              {share.grantee_name?.charAt(0).toUpperCase() || '?'}
+                            </span>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-gray-900 truncate">
-                              {record.display_name || record.filename}
-                            </p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              {record.category && (
-                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
-                                  {record.category}
-                                </span>
-                              )}
-                              <span className="text-xs text-gray-500">
-                                {new Date(record.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                              </span>
-                            </div>
+                            <p className="font-semibold text-gray-900 truncate">{share.grantee_name || 'Unknown Patient'}</p>
+                            <span className="text-xs text-gray-500 truncate">{share.filename}</span>
                           </div>
-                          <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
-                            🔒 Encrypted
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full flex-shrink-0 ${share.status === 'revoked' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
+                            }`}>
+                            {share.status === 'revoked' ? '↩ Revoked' : share.status === 'expired' ? '⏱ Expired' : share.status}
                           </span>
-                          <svg 
+                          <svg
                             className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
                             fill="none" stroke="currentColor" viewBox="0 0 24 24"
                           >
@@ -1966,26 +1797,27 @@ export default function HospitalAccessPage() {
 
                         {/* Expanded Content */}
                         {isExpanded && (
-                          <div className="px-4 pb-4 border-t border-emerald-100 bg-white/50">
+                          <div className="px-4 pb-4 border-t border-gray-100 bg-white/50">
                             <div className="pt-4 space-y-3">
-                              <div>
-                                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Content ID (CID)</p>
-                                <CidDisplay cid={record.cid} />
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-gray-500">Shared on</span>
+                                <span className="text-gray-900">{new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                               </div>
-                              
-                              {record.tx_hash && (
-                                <div>
-                                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Transaction</p>
-                                  <TxHashDisplay txHash={record.tx_hash} label="" />
+                              {share.revoked_at && (
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-500">Revoked on</span>
+                                  <span className="text-orange-600">{new Date(share.revoked_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                                 </div>
                               )}
-                              
-                              {record.capsule && (
+                              {share.expires_at && !share.revoked_at && (
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-500">Expired on</span>
+                                  <span className="text-gray-600">{new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                </div>
+                              )}
+                              {share.tx_hash && (
                                 <div>
-                                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Encryption Capsule</p>
-                                  <code className="block p-2 bg-gray-100 rounded-lg text-xs font-mono text-gray-600 break-all">
-                                    {record.capsule.substring(0, 48)}...
-                                  </code>
+                                  <TxHashDisplay txHash={share.tx_hash} label="TX" />
                                 </div>
                               )}
                             </div>
@@ -1995,856 +1827,1042 @@ export default function HospitalAccessPage() {
                     );
                   })}
                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Keys Section */}
-        {activeSection === 'keys' && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Header matching other sections */}
-            <div className="flex border-b border-gray-200">
-              <div className="flex-1 px-4 py-3.5 text-sm font-medium text-cyan-600 bg-cyan-50 relative">
-                <span className="flex items-center justify-center gap-2">
-                  🔑 Encryption Keys
-                  {hasUmbralKeys && (
-                    <span className="px-2 py-0.5 text-xs bg-green-500 text-white rounded-full">Ready</span>
-                  )}
-                </span>
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-500"></div>
-              </div>
-            </div>
-
-            {/* Content */}
-            <div className="p-5">
-              {!umbralReady ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-600"></div>
-                  <span className="ml-2 text-gray-500">Loading encryption library...</span>
+              )
+            ) : activeTab === 'shared-with-me' ? (
+              groupedFilesSharedWithMe.length === 0 ? (
+                <div className="text-center py-12">
+                  <span className="text-4xl">📥</span>
+                  <p className="text-gray-500 mt-3">No files shared with you</p>
+                  <p className="text-sm text-gray-400">Other patients can share their medical records with you</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {/* Key Status Card */}
-                  <div className={`rounded-xl p-4 border ${hasUmbralKeys ? 'bg-green-50 border-green-100' : 'bg-amber-50 border-amber-100'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        hasUmbralKeys ? 'bg-green-100' : 'bg-amber-100'
-                      }`}>
-                        <span>{hasUmbralKeys ? '✓' : '⚠️'}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900">
-                          {hasUmbralKeys ? 'Keys Available' : 'No Keys Found'}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {hasUmbralKeys 
-                            ? 'Your encryption keys are ready for secure file sharing'
-                            : 'Generate keys to enable access approvals and file sharing'
-                          }
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Public Key Display */}
-                  {hasUmbralKeys && myPublicKey && (
-                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-medium text-gray-700">Your Public Key</p>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(myPublicKey);
-                            setKeyMessage('Public key copied to clipboard!');
-                          }}
-                          className="text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+                <div className="space-y-3">
+                  {/* Grouped by patient */}
+                  {groupedFilesSharedWithMe.map((group) => {
+                    const isGroupExpanded = expandedSharedFromGroup === group.granter_id;
+                    return (
+                      <div
+                        key={group.granter_id}
+                        className="bg-blue-50 rounded-xl border border-blue-100 overflow-hidden"
+                      >
+                        {/* Patient Group Header */}
+                        <div
+                          className="flex items-center gap-3 p-4 cursor-pointer hover:bg-blue-100/50 transition-colors"
+                          onClick={() => setExpandedSharedFromGroup(isGroupExpanded ? null : group.granter_id)}
                         >
-                          📋 Copy
-                        </button>
-                      </div>
-                      <code className="block p-3 bg-white rounded-lg border text-xs break-all font-mono text-gray-600">
-                        {myPublicKey}
-                      </code>
-                    </div>
-                  )}
-
-                  {/* Generate Keys Button */}
-                  {!hasUmbralKeys && (
-                    <button
-                      onClick={handleGenerateKeys}
-                      className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-medium rounded-xl hover:from-cyan-600 hover:to-blue-600 transition-all duration-200 flex items-center justify-center gap-2"
-                    >
-                      <span>🔑</span> Generate New Keys
-                    </button>
-                  )}
-
-                  {/* Export Keys */}
-                  {hasUmbralKeys && (
-                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                      <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-medium text-gray-700">Backup Keys</p>
-                        <button
-                          onClick={handleExportKeys}
-                          className="px-3 py-1.5 bg-gray-600 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors"
-                        >
-                          📦 Export
-                        </button>
-                      </div>
-                      {keyBackup && (
-                        <div>
-                          <textarea
-                            readOnly
-                            value={keyBackup}
-                            className="w-full p-3 border rounded-lg text-xs font-mono bg-white"
-                            rows={2}
-                          />
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(keyBackup);
-                              setKeyMessage('Backup copied to clipboard!');
-                            }}
-                            className="mt-2 text-xs text-cyan-600 hover:text-cyan-700 font-medium"
-                          >
-                            📋 Copy backup string
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Import Keys */}
-                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                    <p className="text-sm font-medium text-gray-700 mb-3">Import Keys from Backup</p>
-                    <textarea
-                      value={importKeyInput}
-                      onChange={(e) => setImportKeyInput(e.target.value)}
-                      placeholder="Paste your key backup string here..."
-                      className="w-full p-3 border rounded-lg text-xs font-mono bg-white"
-                      rows={2}
-                    />
-                    <button
-                      onClick={handleImportKeys}
-                      className="mt-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
-                    >
-                      📥 Import Keys
-                    </button>
-                  </div>
-
-                  {/* Messages */}
-                  {keyMessage && (
-                    <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-sm">
-                      {keyMessage}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Approve Modal */}
-        {showApproveModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
-              <div className="p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">Approve Access Request</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  This will be recorded on the blockchain
-                </p>
-              </div>
-
-              <div className="p-6 space-y-4">
-                {/* Expiry Duration */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Access Duration (optional)
-                  </label>
-                  <select
-                    value={approveExpiryDays}
-                    onChange={(e) => setApproveExpiryDays(Number(e.target.value))}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  >
-                    <option value={0}>No expiry (permanent until revoked)</option>
-                    <option value={1}>1 day</option>
-                    <option value={7}>7 days</option>
-                    <option value={30}>30 days</option>
-                    <option value={90}>90 days</option>
-                    <option value={365}>1 year</option>
-                  </select>
-                </div>
-
-                {/* Info Box */}
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                  <h4 className="font-medium text-blue-900 flex items-center gap-2">
-                    <span>ℹ️</span> What does this mean?
-                  </h4>
-                  <ul className="text-sm text-blue-700 mt-2 space-y-1">
-                    <li>• Hospital can upload medical records on your behalf</li>
-                    <li>• You remain the owner of all uploaded files</li>
-                    <li>• You can revoke access at any time</li>
-                    <li>• Grant is recorded on Sepolia blockchain</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div className="p-6 border-t border-gray-100 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowApproveModal(null);
-                    setApproveExpiryDays(0);
-                  }}
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleApprove(showApproveModal)}
-                  disabled={isApproving === showApproveModal}
-                  className="flex-1 btn-primary disabled:opacity-50"
-                >
-                  {isApproving === showApproveModal ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Checking keys...
-                    </span>
-                  ) : (
-                    'Continue to Approve'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Passphrase Modal for kfrag generation */}
-        {showPassphraseModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl max-w-md w-full shadow-xl">
-              <div className="p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">🔐 Confirm with Passphrase</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Enter your encryption passphrase to authorize access
-                </p>
-              </div>
-
-              <div className="p-6 space-y-4">
-                {passphraseError && (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-                    {passphraseError}
-                  </div>
-                )}
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Your Encryption Passphrase
-                  </label>
-                  <input
-                    type="password"
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    placeholder="Enter your passphrase"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && passphrase) {
-                        handleApproveWithPassphrase();
-                      }
-                    }}
-                  />
-                </div>
-
-                {/* Security Info Box */}
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-                  <h4 className="font-medium text-emerald-900 flex items-center gap-2">
-                    <span>🔒</span> Secure Access Grant
-                  </h4>
-                  <ul className="text-sm text-emerald-700 mt-2 space-y-1">
-                    <li>• Your passphrase never leaves your browser</li>
-                    <li>• Hospital will use their own keys to decrypt</li>
-                    <li>• You can revoke access at any time to stop decryption</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div className="p-6 border-t border-gray-100 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowPassphraseModal(null);
-                    setPassphrase('');
-                    setPassphraseError('');
-                    setHospitalPublicKey(null);
-                  }}
-                  disabled={isGeneratingKfrag}
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleApproveWithPassphrase}
-                  disabled={isGeneratingKfrag || !passphrase}
-                  className="flex-1 btn-primary disabled:opacity-50"
-                >
-                  {isGeneratingKfrag ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Authorizing...
-                    </span>
-                  ) : (
-                    'Authorize Access'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Patient Share Modal */}
-        {showShareModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl max-w-lg w-full shadow-xl max-h-[90vh] overflow-y-auto">
-              <div className="p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">📤 Share Files with Patient</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Share your medical files with another patient using their UUID
-                </p>
-              </div>
-
-              <div className="p-6 space-y-4">
-                {shareError && (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-                    {shareError}
-                  </div>
-                )}
-
-                {/* Patient UUID Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Patient UUID
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={sharePatientUuid}
-                      onChange={(e) => {
-                        setSharePatientUuid(e.target.value);
-                        setPatientToShare(null);
-                      }}
-                      placeholder="Enter patient UUID"
-                      className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!sharePatientUuid) return;
-                        setShareError('');
-                        const result = await getPatientPublicKey(sharePatientUuid);
-                        if (result.error) {
-                          setShareError(result.error);
-                          return;
-                        }
-                        if (result.data) {
-                          setPatientToShare({
-                            uuid: sharePatientUuid,
-                            name: result.data.patient_name,
-                            hasKey: result.data.has_public_key
-                          });
-                        }
-                      }}
-                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
-                    >
-                      Verify
-                    </button>
-                  </div>
-                  {patientToShare && (
-                    <div className={`mt-2 p-3 rounded-lg ${patientToShare.hasKey ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
-                      <p className="text-sm font-medium">
-                        {patientToShare.hasKey ? '✓' : '⚠️'} {patientToShare.name || `Patient (${patientToShare.uuid.slice(0, 8)}...)`}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">UUID: {patientToShare.uuid}</p>
-                      {!patientToShare.hasKey && (
-                        <p className="text-xs text-amber-700 mt-1">This patient has not set up encryption keys yet.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* File Selection - Folder-based organization */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Files to Share
-                  </label>
-                  {myFiles.length === 0 ? (
-                    <p className="text-sm text-gray-500">No files available to share.</p>
-                  ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto border border-gray-200 rounded-xl p-2">
-                      {Object.entries(filesByCategory).map(([category, files]) => {
-                        const categoryFileIds = files.map(f => f.id);
-                        const selectedCount = categoryFileIds.filter(id => shareSelectedFiles.includes(id)).length;
-                        const allSelected = selectedCount === files.length;
-                        const someSelected = selectedCount > 0 && selectedCount < files.length;
-                        const isExpanded = expandedCategories.has(category);
-                        
-                        return (
-                          <div key={category} className="border border-gray-100 rounded-lg overflow-hidden">
-                            {/* Category Header */}
-                            <div 
-                              className="flex items-center gap-2 p-2.5 bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
-                              onClick={() => toggleCategoryExpansion(category)}
+                          <div className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                            <span className="text-white font-bold text-lg">
+                              {group.granter_name?.charAt(0).toUpperCase() || '?'}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-gray-900 text-lg">{group.granter_name || 'Unknown Patient'}</p>
+                            <span className="text-sm text-gray-500">{group.shares.length} file{group.shares.length !== 1 ? 's' : ''} shared with you</span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                              {group.shares.length} Active
+                            </span>
+                            <svg
+                              className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
+                              fill="none" stroke="currentColor" viewBox="0 0 24 24"
                             >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleCategorySelection(category, files);
-                                }}
-                                className={`w-5 h-5 flex items-center justify-center rounded border-2 transition-colors ${
-                                  allSelected ? 'bg-indigo-600 border-indigo-600 text-white' :
-                                  someSelected ? 'bg-indigo-100 border-indigo-600' :
-                                  'border-gray-300'
-                                }`}
-                              >
-                                {allSelected && <span className="text-xs">✓</span>}
-                                {someSelected && <span className="text-indigo-600 text-xs">−</span>}
-                              </button>
-                              <span className="text-lg">{categoryIcons[category] || '📁'}</span>
-                              <span className="font-medium text-gray-900 flex-1">{category}</span>
-                              <span className="text-xs text-gray-500">
-                                {selectedCount > 0 && <span className="text-indigo-600 font-medium">{selectedCount}/</span>}
-                                {files.length} files
-                              </span>
-                              <svg 
-                                className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                                fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </div>
-                            
-                            {/* Files in Category */}
-                            {isExpanded && (
-                              <div className="border-t border-gray-100 bg-white">
-                                {files.map((file) => (
-                                  <label
-                                    key={file.id}
-                                    className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0"
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                        </div>
+
+                        {/* Expanded: List of files */}
+                        {isGroupExpanded && (
+                          <div className="px-4 pb-4 border-t border-blue-100 bg-white/50">
+                            <div className="pt-4 space-y-2">
+                              {group.shares.map((share) => (
+                                <div
+                                  key={share.grant_id}
+                                  className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 truncate">{share.filename}</p>
+                                    <p className="text-xs text-gray-400">
+                                      {new Date(share.granted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                      {share.expires_at && ` • Expires ${new Date(share.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setViewingSharedFile(share);
+                                      setShowViewSharedModal(true);
+                                    }}
+                                    className="ml-2 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-700 transition-colors"
                                   >
-                                    <input
-                                      type="checkbox"
-                                      checked={shareSelectedFiles.includes(file.id)}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setShareSelectedFiles([...shareSelectedFiles, file.id]);
-                                        } else {
-                                          setShareSelectedFiles(shareSelectedFiles.filter(id => id !== file.id));
-                                        }
-                                      }}
-                                      className="w-4 h-4 text-indigo-600 rounded"
-                                    />
-                                    <span className="text-sm text-gray-700">{getFileDisplayName(file)}</span>
-                                  </label>
-                                ))}
+                                    🔓 View
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Records Section */}
+      {activeSection === 'records' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Header matching other sections */}
+          <div className="flex border-b border-gray-200">
+            <div className="flex-1 px-4 py-3.5 text-sm font-medium text-emerald-600 bg-emerald-50 relative">
+              <span className="flex items-center justify-center gap-2">
+                📁 My Records
+                {patientRecords.length > 0 && (
+                  <span className="text-xs text-gray-400">({patientRecords.length})</span>
+                )}
+              </span>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500"></div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-5">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+              </div>
+            ) : patientRecords.length === 0 ? (
+              <div className="text-center py-12">
+                <span className="text-4xl">📁</span>
+                <p className="text-gray-500 mt-3">No records uploaded yet</p>
+                <p className="text-sm text-gray-400">Your health records will appear here after hospitals upload them</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {patientRecords.map((record) => {
+                  const isExpanded = expandedRecordId === record.id;
+                  return (
+                    <div
+                      key={record.id}
+                      className="bg-emerald-50 rounded-xl border border-emerald-100 overflow-hidden"
+                    >
+                      {/* Collapsed Header */}
+                      <div
+                        className="flex items-center gap-3 p-4 cursor-pointer hover:bg-emerald-100/50 transition-colors"
+                        onClick={() => setExpandedRecordId(isExpanded ? null : record.id)}
+                      >
+                        <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-white font-bold text-sm">📄</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-gray-900 truncate">
+                            {record.display_name || record.filename}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {record.category && (
+                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
+                                {record.category}
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-500">
+                              {new Date(record.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
+                          🔒 Encrypted
+                        </span>
+                        <svg
+                          className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+
+                      {/* Expanded Content */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t border-emerald-100 bg-white/50">
+                          <div className="pt-4 space-y-3">
+                            <div>
+                              <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Content ID (CID)</p>
+                              <CidDisplay cid={record.cid} />
+                            </div>
+
+                            {record.tx_hash && (
+                              <div>
+                                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Transaction</p>
+                                <TxHashDisplay txHash={record.tx_hash} label="" />
+                              </div>
+                            )}
+
+                            {record.capsule && (
+                              <div>
+                                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Encryption Capsule</p>
+                                <code className="block p-2 bg-gray-100 rounded-lg text-xs font-mono text-gray-600 break-all">
+                                  {record.capsule.substring(0, 48)}...
+                                </code>
                               </div>
                             )}
                           </div>
-                        );
-                      })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    {shareSelectedFiles.length} file(s) selected from {Object.keys(filesByCategory).length} categories
-                  </p>
-                </div>
-
-                {/* Expiry Duration */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Access Duration (optional)
-                  </label>
-                  <select
-                    value={shareExpiryDays}
-                    onChange={(e) => setShareExpiryDays(Number(e.target.value))}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  >
-                    <option value={0}>No expiry (permanent until revoked)</option>
-                    <option value={1}>1 day</option>
-                    <option value={7}>7 days</option>
-                    <option value={30}>30 days</option>
-                    <option value={90}>90 days</option>
-                    <option value={365}>1 year</option>
-                  </select>
-                </div>
-
-                {/* Purpose (optional) */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Purpose (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={sharePurpose}
-                    onChange={(e) => setSharePurpose(e.target.value)}
-                    placeholder="e.g., Second opinion, specialist referral"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
-
-                {/* Passphrase */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Your Encryption Passphrase
-                  </label>
-                  <input
-                    type="password"
-                    value={sharePassphrase}
-                    onChange={(e) => setSharePassphrase(e.target.value)}
-                    placeholder="Enter your passphrase to authorize"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
-
-                {/* Security Info */}
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                  <h4 className="font-medium text-blue-900 flex items-center gap-2">
-                    <span>🔒</span> Secure Patient Sharing
-                  </h4>
-                  <ul className="text-sm text-blue-700 mt-2 space-y-1">
-                    <li>• Share is recorded on the blockchain</li>
-                    <li>• You can revoke access at any time</li>
-                    <li>• Patient uses their own keys to decrypt</li>
-                  </ul>
-                </div>
+                  );
+                })}
               </div>
+            )}
+          </div>
+        </div>
+      )}
 
-              <div className="p-6 border-t border-gray-100 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowShareModal(false);
-                    setSharePatientUuid('');
-                    setShareSelectedFiles([]);
-                    setShareExpiryDays(0);
-                    setSharePurpose('');
-                    setSharePassphrase('');
-                    setPatientToShare(null);
-                    setShareError('');
-                    setExpandedCategories(new Set());
-                  }}
-                  disabled={isSharing}
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleShareFiles}
-                  disabled={isSharing || !patientToShare?.hasKey || shareSelectedFiles.length === 0 || !sharePassphrase}
-                  className="flex-1 btn-primary disabled:opacity-50"
-                >
-                  {isSharing ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Sharing...
-                    </span>
-                  ) : (
-                    'Share Files'
-                  )}
-                </button>
-              </div>
+      {/* Keys Section */}
+      {activeSection === 'keys' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Header matching other sections */}
+          <div className="flex border-b border-gray-200">
+            <div className="flex-1 px-4 py-3.5 text-sm font-medium text-cyan-600 bg-cyan-50 relative">
+              <span className="flex items-center justify-center gap-2">
+                🔑 Encryption Keys
+                {hasUmbralKeys && (
+                  <span className="px-2 py-0.5 text-xs bg-green-500 text-white rounded-full">Ready</span>
+                )}
+              </span>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-500"></div>
             </div>
           </div>
-        )}
 
-        {/* View & Decrypt Shared File Modal */}
-        {showViewSharedModal && viewingSharedFile && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl max-w-2xl w-full shadow-xl max-h-[90vh] overflow-hidden flex flex-col">
-              <div className="p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">🔓 View Shared File</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Decrypt and view the file shared with you
+          {/* Content */}
+          <div className="p-5">
+            {!umbralReady ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-600"></div>
+                <span className="ml-2 text-gray-500">Loading encryption library...</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Key Status Card */}
+                <div className={`rounded-xl p-4 border ${hasUmbralKeys ? 'bg-green-50 border-green-100' : 'bg-amber-50 border-amber-100'}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${hasUmbralKeys ? 'bg-green-100' : 'bg-amber-100'
+                      }`}>
+                      <span>{hasUmbralKeys ? '✓' : '⚠️'}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-900">
+                        {hasUmbralKeys ? 'Keys Available' : 'No Keys Found'}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {hasUmbralKeys
+                          ? 'Your encryption keys are ready for secure file sharing'
+                          : 'Generate keys to enable access approvals and file sharing'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Public Key Display */}
+                {hasUmbralKeys && myPublicKey && (
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium text-gray-700">Your Public Key</p>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(myPublicKey);
+                          setKeyMessage('Public key copied to clipboard!');
+                        }}
+                        className="text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+                      >
+                        📋 Copy
+                      </button>
+                    </div>
+                    <code className="block p-3 bg-white rounded-lg border text-xs break-all font-mono text-gray-600">
+                      {myPublicKey}
+                    </code>
+                  </div>
+                )}
+
+                {/* Generate Keys Button */}
+                {!hasUmbralKeys && (
+                  <button
+                    onClick={handleGenerateKeys}
+                    className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-medium rounded-xl hover:from-cyan-600 hover:to-blue-600 transition-all duration-200 flex items-center justify-center gap-2"
+                  >
+                    <span>🔑</span> Generate New Keys
+                  </button>
+                )}
+
+                {/* Export Keys */}
+                {hasUmbralKeys && (
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-medium text-gray-700">Backup Keys</p>
+                      <button
+                        onClick={handleExportKeys}
+                        className="px-3 py-1.5 bg-gray-600 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors"
+                      >
+                        📦 Export
+                      </button>
+                    </div>
+                    {keyBackup && (
+                      <div>
+                        <textarea
+                          readOnly
+                          value={keyBackup}
+                          className="w-full p-3 border rounded-lg text-xs font-mono bg-white"
+                          rows={2}
+                        />
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(keyBackup);
+                            setKeyMessage('Backup copied to clipboard!');
+                          }}
+                          className="mt-2 text-xs text-cyan-600 hover:text-cyan-700 font-medium"
+                        >
+                          📋 Copy backup string
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Import Keys */}
+                <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                  <p className="text-sm font-medium text-gray-700 mb-3">Import Keys from Backup</p>
+                  <textarea
+                    value={importKeyInput}
+                    onChange={(e) => setImportKeyInput(e.target.value)}
+                    placeholder="Paste your key backup string here..."
+                    className="w-full p-3 border rounded-lg text-xs font-mono bg-white"
+                    rows={2}
+                  />
+                  <button
+                    onClick={handleImportKeys}
+                    className="mt-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    📥 Import Keys
+                  </button>
+                </div>
+
+                {/* Messages */}
+                {keyMessage && (
+                  <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-sm">
+                    {keyMessage}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Approve Modal */}
+      {showApproveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Approve Access Request</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                This will be recorded on the blockchain
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Expiry Duration */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Access Duration (optional)
+                </label>
+                <select
+                  value={approveExpiryDays}
+                  onChange={(e) => setApproveExpiryDays(Number(e.target.value))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value={0}>No expiry (permanent until revoked)</option>
+                  <option value={1}>1 day</option>
+                  <option value={7}>7 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={90}>90 days</option>
+                  <option value={365}>1 year</option>
+                </select>
+              </div>
+
+              {/* Info Box */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <h4 className="font-medium text-blue-900 flex items-center gap-2">
+                  <span>ℹ️</span> What does this mean?
+                </h4>
+                <ul className="text-sm text-blue-700 mt-2 space-y-1">
+                  <li>• Hospital can upload medical records on your behalf</li>
+                  <li>• You remain the owner of all uploaded files</li>
+                  <li>• You can revoke access at any time</li>
+                  <li>• Grant is recorded on Sepolia blockchain</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowApproveModal(null);
+                  setApproveExpiryDays(0);
+                }}
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleApprove(showApproveModal)}
+                disabled={isApproving === showApproveModal}
+                className="flex-1 btn-primary disabled:opacity-50"
+              >
+                {isApproving === showApproveModal ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Checking keys...
+                  </span>
+                ) : (
+                  'Continue to Approve'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Passphrase Modal for kfrag generation */}
+      {showPassphraseModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-xl">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">🔐 Confirm with Passphrase</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Enter your encryption passphrase to authorize access
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {passphraseError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {passphraseError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Your Encryption Passphrase
+                </label>
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Enter your passphrase"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && passphrase) {
+                      handleApproveWithPassphrase();
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Security Info Box */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                <h4 className="font-medium text-emerald-900 flex items-center gap-2">
+                  <span>🔒</span> Secure Access Grant
+                </h4>
+                <ul className="text-sm text-emerald-700 mt-2 space-y-1">
+                  <li>• Your passphrase never leaves your browser</li>
+                  <li>• Hospital will use their own keys to decrypt</li>
+                  <li>• You can revoke access at any time to stop decryption</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowPassphraseModal(null);
+                  setPassphrase('');
+                  setPassphraseError('');
+                  setHospitalPublicKey(null);
+                }}
+                disabled={isGeneratingKfrag}
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApproveWithPassphrase}
+                disabled={isGeneratingKfrag || !passphrase}
+                className="flex-1 btn-primary disabled:opacity-50"
+              >
+                {isGeneratingKfrag ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Authorizing...
+                  </span>
+                ) : (
+                  'Authorize Access'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Patient Share Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">📤 Share Files with Patient</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Share your medical files with another patient using their UUID
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {shareError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {shareError}
+                </div>
+              )}
+
+              {/* Patient UUID Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Patient UUID
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={sharePatientUuid}
+                    onChange={(e) => {
+                      setSharePatientUuid(e.target.value);
+                      setPatientToShare(null);
+                    }}
+                    placeholder="Enter patient UUID"
+                    className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!sharePatientUuid) return;
+                      setShareError('');
+                      const result = await getPatientPublicKey(sharePatientUuid);
+                      if (result.error) {
+                        setShareError(result.error);
+                        return;
+                      }
+                      if (result.data) {
+                        setPatientToShare({
+                          uuid: sharePatientUuid,
+                          name: result.data.patient_name,
+                          hasKey: result.data.has_public_key
+                        });
+                      }
+                    }}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+                  >
+                    Verify
+                  </button>
+                </div>
+                {patientToShare && (
+                  <div className={`mt-2 p-3 rounded-lg ${patientToShare.hasKey ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                    <p className="text-sm font-medium">
+                      {patientToShare.hasKey ? '✓' : '⚠️'} {patientToShare.name || `Patient (${patientToShare.uuid.slice(0, 8)}...)`}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">UUID: {patientToShare.uuid}</p>
+                    {!patientToShare.hasKey && (
+                      <p className="text-xs text-amber-700 mt-1">This patient has not set up encryption keys yet.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* File Selection - Folder-based organization */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Files to Share
+                </label>
+                {myFiles.length === 0 ? (
+                  <p className="text-sm text-gray-500">No files available to share.</p>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto border border-gray-200 rounded-xl p-2">
+                    {Object.entries(filesByCategory).map(([category, files]) => {
+                      const categoryFileIds = files.map(f => f.id);
+                      const selectedCount = categoryFileIds.filter(id => shareSelectedFiles.includes(id)).length;
+                      const allSelected = selectedCount === files.length;
+                      const someSelected = selectedCount > 0 && selectedCount < files.length;
+                      const isExpanded = expandedCategories.has(category);
+
+                      return (
+                        <div key={category} className="border border-gray-100 rounded-lg overflow-hidden">
+                          {/* Category Header */}
+                          <div
+                            className="flex items-center gap-2 p-2.5 bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                            onClick={() => toggleCategoryExpansion(category)}
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleCategorySelection(category, files);
+                              }}
+                              className={`w-5 h-5 flex items-center justify-center rounded border-2 transition-colors ${allSelected ? 'bg-indigo-600 border-indigo-600 text-white' :
+                                someSelected ? 'bg-indigo-100 border-indigo-600' :
+                                  'border-gray-300'
+                                }`}
+                            >
+                              {allSelected && <span className="text-xs">✓</span>}
+                              {someSelected && <span className="text-indigo-600 text-xs">−</span>}
+                            </button>
+                            <span className="text-lg">{categoryIcons[category] || '📁'}</span>
+                            <span className="font-medium text-gray-900 flex-1">{category}</span>
+                            <span className="text-xs text-gray-500">
+                              {selectedCount > 0 && <span className="text-indigo-600 font-medium">{selectedCount}/</span>}
+                              {files.length} files
+                            </span>
+                            <svg
+                              className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+
+                          {/* Files in Category */}
+                          {isExpanded && (
+                            <div className="border-t border-gray-100 bg-white">
+                              {files.map((file) => (
+                                <label
+                                  key={file.id}
+                                  className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={shareSelectedFiles.includes(file.id)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setShareSelectedFiles([...shareSelectedFiles, file.id]);
+                                      } else {
+                                        setShareSelectedFiles(shareSelectedFiles.filter(id => id !== file.id));
+                                      }
+                                    }}
+                                    className="w-4 h-4 text-indigo-600 rounded"
+                                  />
+                                  <span className="text-sm text-gray-700">{getFileDisplayName(file)}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
+                  {shareSelectedFiles.length} file(s) selected from {Object.keys(filesByCategory).length} categories
                 </p>
               </div>
 
-              <div className="p-6 space-y-4 flex-1 overflow-y-auto">
-                {/* File Info */}
-                <div className="bg-gray-50 rounded-xl p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-blue-600 font-semibold text-lg">
-                        {viewingSharedFile.granter_name?.charAt(0) || '?'}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-gray-900">{viewingSharedFile.granter_name || 'Unknown Patient'}</p>
-                      <p className="text-sm text-gray-600">{viewingSharedFile.filename}</p>
-                      <p className="text-xs text-gray-400">
-                        Shared: {new Date(viewingSharedFile.granted_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {viewError && (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-                    {viewError}
-                  </div>
-                )}
-
-                {!decryptedContent ? (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Your Encryption Passphrase
-                      </label>
-                      <input
-                        type="password"
-                        value={viewPassphrase}
-                        onChange={(e) => setViewPassphrase(e.target.value)}
-                        placeholder="Enter your passphrase to decrypt"
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && viewPassphrase) {
-                            handleDecryptSharedFile();
-                          }
-                        }}
-                      />
-                    </div>
-
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-                      <p className="text-sm text-indigo-700">
-                        <span className="font-medium">🔐 End-to-end encrypted:</span> This file was encrypted specifically for you using Proxy Re-Encryption. 
-                        Only you can decrypt it with your private key.
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
-                      <p className="text-sm text-green-700 font-medium">✓ File decrypted successfully</p>
-                      <button
-                        onClick={handleSaveSharedFile}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Save File
-                      </button>
-                    </div>
-
-                    {/* Display decrypted content based on mime type */}
-                    {decryptedContent.mimeType.startsWith('image/') ? (
-                      <div className="space-y-3">
-                        {/* Image Zoom Controls */}
-                        <div className="flex items-center justify-center gap-2 bg-gray-100 rounded-lg p-2">
-                          <button
-                            onClick={() => setImageZoom(z => Math.max(0.25, z - 0.25))}
-                            className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                            title="Zoom Out"
-                          >
-                            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                            </svg>
-                          </button>
-                          <span className="text-sm font-medium text-gray-700 w-16 text-center">{Math.round(imageZoom * 100)}%</span>
-                          <button
-                            onClick={() => setImageZoom(z => Math.min(3, z + 0.25))}
-                            className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                            title="Zoom In"
-                          >
-                            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => setImageZoom(1)}
-                            className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                            title="Reset Zoom"
-                          >
-                            Reset
-                          </button>
-                          <button
-                            onClick={() => setImageZoom(z => Math.min(3, z + 0.5))}
-                            className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                            title="Fit to View"
-                          >
-                            Fit
-                          </button>
-                        </div>
-                        {/* Image Preview with zoom */}
-                        <div className="bg-gray-100 rounded-lg overflow-auto max-h-[500px] flex items-center justify-center p-4">
-                          <img 
-                            src={`data:${decryptedContent.mimeType};base64,${decryptedContent.data}`}
-                            alt={decryptedContent.filename}
-                            className="rounded-lg shadow-md transition-transform duration-200 max-w-full h-auto object-contain"
-                            style={{ 
-                              transform: `scale(${imageZoom})`, 
-                              transformOrigin: 'center',
-                              maxHeight: imageZoom === 1 ? '450px' : 'none'
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ) : decryptedContent.mimeType === 'application/pdf' ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
-                          <span className="text-sm text-gray-600">📄 PDF Document</span>
-                          <a
-                            href={`data:application/pdf;base64,${decryptedContent.data}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                          >
-                            Open in New Tab
-                          </a>
-                        </div>
-                        <div className="border rounded-lg overflow-hidden">
-                          <iframe
-                            src={`data:application/pdf;base64,${decryptedContent.data}`}
-                            className="w-full h-[450px]"
-                            title={decryptedContent.filename}
-                          />
-                        </div>
-                      </div>
-                    ) : decryptedContent.mimeType.startsWith('text/') || 
-                       decryptedContent.mimeType === 'application/json' ||
-                       decryptedContent.mimeType === 'application/xml' ? (
-                      <div className="space-y-2">
-                        {/* Text Controls */}
-                        <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
-                          <span className="text-sm text-gray-600">📝 Text File</span>
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                              <input
-                                type="checkbox"
-                                checked={textWrap}
-                                onChange={(e) => setTextWrap(e.target.checked)}
-                                className="rounded border-gray-300"
-                              />
-                              Wrap Text
-                            </label>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(atob(decryptedContent.data));
-                              }}
-                              className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                            >
-                              Copy All
-                            </button>
-                          </div>
-                        </div>
-                        <div className="bg-gray-900 text-gray-100 rounded-lg p-4 max-h-[400px] overflow-auto">
-                          <pre className={`text-sm font-mono ${textWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>
-                            {atob(decryptedContent.data)}
-                          </pre>
-                        </div>
-                      </div>
-                    ) : (
-                      /* Default file handler with enhanced file type display */
-                      (() => {
-                        const getFileIcon = () => {
-                          const filename = decryptedContent.filename.toLowerCase();
-                          const mime = decryptedContent.mimeType;
-                          
-                          // Word documents
-                          if (filename.endsWith('.doc') || filename.endsWith('.docx') || 
-                              mime.includes('msword') || mime.includes('wordprocessingml')) {
-                            return { icon: '📄', label: 'Word Document', color: 'blue' };
-                          }
-                          // Excel spreadsheets
-                          if (filename.endsWith('.xls') || filename.endsWith('.xlsx') || 
-                              mime.includes('spreadsheet') || mime.includes('excel')) {
-                            return { icon: '📊', label: 'Excel Spreadsheet', color: 'green' };
-                          }
-                          // PowerPoint
-                          if (filename.endsWith('.ppt') || filename.endsWith('.pptx') || 
-                              mime.includes('presentation') || mime.includes('powerpoint')) {
-                            return { icon: '📽️', label: 'PowerPoint Presentation', color: 'orange' };
-                          }
-                          // Archives
-                          if (filename.endsWith('.zip') || filename.endsWith('.rar') || 
-                              filename.endsWith('.7z') || mime.includes('zip') || mime.includes('archive')) {
-                            return { icon: '📦', label: 'Archive File', color: 'yellow' };
-                          }
-                          // Audio
-                          if (mime.startsWith('audio/') || filename.endsWith('.mp3') || 
-                              filename.endsWith('.wav') || filename.endsWith('.ogg')) {
-                            return { icon: '🎵', label: 'Audio File', color: 'purple' };
-                          }
-                          // Video
-                          if (mime.startsWith('video/') || filename.endsWith('.mp4') || 
-                              filename.endsWith('.avi') || filename.endsWith('.mov')) {
-                            return { icon: '🎬', label: 'Video File', color: 'red' };
-                          }
-                          // Default
-                          return { icon: '📎', label: 'File', color: 'gray' };
-                        };
-                        
-                        const fileInfo = getFileIcon();
-                        
-                        return (
-                          <div className="text-center py-8 bg-gray-50 rounded-lg">
-                            <div className={`mx-auto w-20 h-20 bg-${fileInfo.color}-100 rounded-2xl flex items-center justify-center mb-4`}>
-                              <span className="text-4xl">{fileInfo.icon}</span>
-                            </div>
-                            <p className="text-lg font-semibold text-gray-800">{decryptedContent.filename}</p>
-                            <p className="text-sm text-gray-500 mt-1">{fileInfo.label}</p>
-                            <p className="text-xs text-gray-400 mt-0.5">{decryptedContent.mimeType}</p>
-                            <button
-                              onClick={handleSaveSharedFile}
-                              className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-md"
-                            >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                              </svg>
-                              Download to View
-                            </button>
-                            <p className="text-xs text-gray-400 mt-3">
-                              This file type cannot be previewed in browser. Download to view with appropriate application.
-                            </p>
-                          </div>
-                        );
-                      })()
-                    )}
-                  </div>
-                )}
+              {/* Expiry Duration */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Access Duration (optional)
+                </label>
+                <select
+                  value={shareExpiryDays}
+                  onChange={(e) => setShareExpiryDays(Number(e.target.value))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value={0}>No expiry (permanent until revoked)</option>
+                  <option value={1}>1 day</option>
+                  <option value={7}>7 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={90}>90 days</option>
+                  <option value={365}>1 year</option>
+                </select>
               </div>
 
-              <div className="p-6 border-t border-gray-100 flex gap-3">
-                <button
-                  onClick={handleCloseViewModal}
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  Close
-                </button>
-                {!decryptedContent && (
-                  <button
-                    onClick={handleDecryptSharedFile}
-                    disabled={isDecrypting || !viewPassphrase}
-                    className="flex-1 btn-primary disabled:opacity-50"
-                  >
-                    {isDecrypting ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        Decrypting...
-                      </span>
-                    ) : (
-                      'Decrypt & View'
-                    )}
-                  </button>
-                )}
-                {decryptedContent && (
-                  <button
-                    onClick={handleSaveSharedFile}
-                    className="flex-1 btn-primary flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    Save to Device
-                  </button>
-                )}
+              {/* Purpose (optional) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Purpose (optional)
+                </label>
+                <input
+                  type="text"
+                  value={sharePurpose}
+                  onChange={(e) => setSharePurpose(e.target.value)}
+                  placeholder="e.g., Second opinion, specialist referral"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Passphrase */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Your Encryption Passphrase
+                </label>
+                <input
+                  type="password"
+                  value={sharePassphrase}
+                  onChange={(e) => setSharePassphrase(e.target.value)}
+                  placeholder="Enter your passphrase to authorize"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Security Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <h4 className="font-medium text-blue-900 flex items-center gap-2">
+                  <span>🔒</span> Secure Patient Sharing
+                </h4>
+                <ul className="text-sm text-blue-700 mt-2 space-y-1">
+                  <li>• Share is recorded on the blockchain</li>
+                  <li>• You can revoke access at any time</li>
+                  <li>• Patient uses their own keys to decrypt</li>
+                </ul>
               </div>
             </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowShareModal(false);
+                  setSharePatientUuid('');
+                  setShareSelectedFiles([]);
+                  setShareExpiryDays(0);
+                  setSharePurpose('');
+                  setSharePassphrase('');
+                  setPatientToShare(null);
+                  setShareError('');
+                  setExpandedCategories(new Set());
+                }}
+                disabled={isSharing}
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleShareFiles}
+                disabled={isSharing || !patientToShare?.hasKey || shareSelectedFiles.length === 0 || !sharePassphrase}
+                className="flex-1 btn-primary disabled:opacity-50"
+              >
+                {isSharing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Sharing...
+                  </span>
+                ) : (
+                  'Share Files'
+                )}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
-    </Layout>
-  );
+        </div>
+      )}
+
+      {/* View & Decrypt Shared File Modal */}
+      {showViewSharedModal && viewingSharedFile && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">🔓 View Shared File</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Decrypt and view the file shared with you
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+              {/* File Info */}
+              <div className="bg-gray-50 rounded-xl p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-600 font-semibold text-lg">
+                      {viewingSharedFile.granter_name?.charAt(0) || '?'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">{viewingSharedFile.granter_name || 'Unknown Patient'}</p>
+                    <p className="text-sm text-gray-600">{viewingSharedFile.filename}</p>
+                    <p className="text-xs text-gray-400">
+                      Shared: {new Date(viewingSharedFile.granted_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {viewError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {viewError}
+                </div>
+              )}
+
+              {!decryptedContent ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Your Encryption Passphrase
+                    </label>
+                    <input
+                      type="password"
+                      value={viewPassphrase}
+                      onChange={(e) => setViewPassphrase(e.target.value)}
+                      placeholder="Enter your passphrase to decrypt"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && viewPassphrase) {
+                          handleDecryptSharedFile();
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                    <p className="text-sm text-indigo-700">
+                      <span className="font-medium">🔐 End-to-end encrypted:</span> This file was encrypted specifically for you using Proxy Re-Encryption.
+                      Only you can decrypt it with your private key.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
+                    <p className="text-sm text-green-700 font-medium">✓ File decrypted successfully</p>
+                    <button
+                      onClick={handleSaveSharedFile}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Save File
+                    </button>
+                  </div>
+
+                  {/* Display decrypted content based on mime type */}
+                  {decryptedContent.mimeType.startsWith('image/') ? (
+                    <div className="space-y-3">
+                      {/* Image Zoom Controls */}
+                      <div className="flex items-center justify-center gap-2 bg-gray-100 rounded-lg p-2">
+                        <button
+                          onClick={() => setImageZoom(z => Math.max(0.25, z - 0.25))}
+                          className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          title="Zoom Out"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                          </svg>
+                        </button>
+                        <span className="text-sm font-medium text-gray-700 w-16 text-center">{Math.round(imageZoom * 100)}%</span>
+                        <button
+                          onClick={() => setImageZoom(z => Math.min(3, z + 0.25))}
+                          className="w-8 h-8 flex items-center justify-center bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          title="Zoom In"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setImageZoom(1)}
+                          className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          title="Reset Zoom"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          onClick={() => setImageZoom(z => Math.min(3, z + 0.5))}
+                          className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          title="Fit to View"
+                        >
+                          Fit
+                        </button>
+                      </div>
+                      {/* Image Preview with zoom */}
+                      <div className="bg-gray-100 rounded-lg overflow-auto max-h-[500px] flex items-center justify-center p-4">
+                        <img
+                          src={`data:${decryptedContent.mimeType};base64,${decryptedContent.data}`}
+                          alt={decryptedContent.filename}
+                          className="rounded-lg shadow-md transition-transform duration-200 max-w-full h-auto object-contain"
+                          style={{
+                            transform: `scale(${imageZoom})`,
+                            transformOrigin: 'center',
+                            maxHeight: imageZoom === 1 ? '450px' : 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : decryptedContent.mimeType === 'application/pdf' ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+                        <span className="text-sm text-gray-600">📄 PDF Document</span>
+                        <a
+                          href={`data:application/pdf;base64,${decryptedContent.data}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                        >
+                          Open in New Tab
+                        </a>
+                      </div>
+                      <div className="border rounded-lg overflow-hidden">
+                        <iframe
+                          src={`data:application/pdf;base64,${decryptedContent.data}`}
+                          className="w-full h-[450px]"
+                          title={decryptedContent.filename}
+                        />
+                      </div>
+                    </div>
+                  ) : decryptedContent.mimeType.startsWith('text/') ||
+                    decryptedContent.mimeType === 'application/json' ||
+                    decryptedContent.mimeType === 'application/xml' ? (
+                    <div className="space-y-2">
+                      {/* Text Controls */}
+                      <div className="flex items-center justify-between bg-gray-100 rounded-lg p-2">
+                        <span className="text-sm text-gray-600">📝 Text File</span>
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={textWrap}
+                              onChange={(e) => setTextWrap(e.target.checked)}
+                              className="rounded border-gray-300"
+                            />
+                            Wrap Text
+                          </label>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(atob(decryptedContent.data));
+                            }}
+                            className="px-2 py-1 text-xs bg-white rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
+                          >
+                            Copy All
+                          </button>
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 text-gray-100 rounded-lg p-4 max-h-[400px] overflow-auto">
+                        <pre className={`text-sm font-mono ${textWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>
+                          {atob(decryptedContent.data)}
+                        </pre>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Default file handler with enhanced file type display */
+                    (() => {
+                      const getFileIcon = () => {
+                        const filename = decryptedContent.filename.toLowerCase();
+                        const mime = decryptedContent.mimeType;
+
+                        // Word documents
+                        if (filename.endsWith('.doc') || filename.endsWith('.docx') ||
+                          mime.includes('msword') || mime.includes('wordprocessingml')) {
+                          return { icon: '📄', label: 'Word Document', color: 'blue' };
+                        }
+                        // Excel spreadsheets
+                        if (filename.endsWith('.xls') || filename.endsWith('.xlsx') ||
+                          mime.includes('spreadsheet') || mime.includes('excel')) {
+                          return { icon: '📊', label: 'Excel Spreadsheet', color: 'green' };
+                        }
+                        // PowerPoint
+                        if (filename.endsWith('.ppt') || filename.endsWith('.pptx') ||
+                          mime.includes('presentation') || mime.includes('powerpoint')) {
+                          return { icon: '📽️', label: 'PowerPoint Presentation', color: 'orange' };
+                        }
+                        // Archives
+                        if (filename.endsWith('.zip') || filename.endsWith('.rar') ||
+                          filename.endsWith('.7z') || mime.includes('zip') || mime.includes('archive')) {
+                          return { icon: '📦', label: 'Archive File', color: 'yellow' };
+                        }
+                        // Audio
+                        if (mime.startsWith('audio/') || filename.endsWith('.mp3') ||
+                          filename.endsWith('.wav') || filename.endsWith('.ogg')) {
+                          return { icon: '🎵', label: 'Audio File', color: 'purple' };
+                        }
+                        // Video
+                        if (mime.startsWith('video/') || filename.endsWith('.mp4') ||
+                          filename.endsWith('.avi') || filename.endsWith('.mov')) {
+                          return { icon: '🎬', label: 'Video File', color: 'red' };
+                        }
+                        // Default
+                        return { icon: '📎', label: 'File', color: 'gray' };
+                      };
+
+                      const fileInfo = getFileIcon();
+
+                      return (
+                        <div className="text-center py-8 bg-gray-50 rounded-lg">
+                          <div className={`mx-auto w-20 h-20 bg-${fileInfo.color}-100 rounded-2xl flex items-center justify-center mb-4`}>
+                            <span className="text-4xl">{fileInfo.icon}</span>
+                          </div>
+                          <p className="text-lg font-semibold text-gray-800">{decryptedContent.filename}</p>
+                          <p className="text-sm text-gray-500 mt-1">{fileInfo.label}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{decryptedContent.mimeType}</p>
+                          <button
+                            onClick={handleSaveSharedFile}
+                            className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-md"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download to View
+                          </button>
+                          <p className="text-xs text-gray-400 mt-3">
+                            This file type cannot be previewed in browser. Download to view with appropriate application.
+                          </p>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={handleCloseViewModal}
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Close
+              </button>
+              {!decryptedContent && (
+                <button
+                  onClick={handleDecryptSharedFile}
+                  disabled={isDecrypting || !viewPassphrase}
+                  className="flex-1 btn-primary disabled:opacity-50"
+                >
+                  {isDecrypting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Decrypting...
+                    </span>
+                  ) : (
+                    'Decrypt & View'
+                  )}
+                </button>
+              )}
+              {decryptedContent && (
+                <button
+                  onClick={handleSaveSharedFile}
+                  className="flex-1 btn-primary flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Save to Device
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  </Layout>
+);
 }

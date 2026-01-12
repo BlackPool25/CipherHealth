@@ -203,7 +203,7 @@ async function encryptWithPassword(
     const encrypted = await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
         key,
-        data
+        data as any
     );
 
     return {
@@ -229,7 +229,7 @@ async function decryptWithPassword(
     const decrypted = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv },
         key,
-        encrypted
+        encrypted as any
     );
 
     return new Uint8Array(decrypted);
@@ -356,7 +356,7 @@ class KeyManager {
      * @param userId - User's ID
      * @returns true if encrypted keys exist for this user
      */
-    static async hasStoredKey(userId: string): Promise<boolean> {
+    static async hasKeypair(userId: string): Promise<boolean> {
         return existsInDB(getUserKeyId(userId));
     }
 
@@ -403,7 +403,7 @@ class KeyManager {
 
         const encryptedKeyData: EncryptedKeyData = {
             encrypted: exportData.encrypted,
-            salt: exportData.salt: salt as any,
+            salt: exportData.salt,
             iv: exportData.iv,
         };
 

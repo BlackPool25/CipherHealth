@@ -107,7 +107,6 @@ export interface User {
     email?: string;
     role: UserRole;
     public_key?: string;
-    created_at?: string;
 }
 
 export interface PatientProfile {
@@ -120,7 +119,6 @@ export interface PatientProfile {
     emergency_contact?: string;
     public_key: string;
     profile_cid?: string;
-    created_at?: string;
 }
 
 export interface HospitalProfile {
@@ -132,7 +130,6 @@ export interface HospitalProfile {
     contact_email?: string;
     contact_phone?: string;
     public_key: string;
-    created_at?: string;
 }
 
 // --- File/Record Types ---
@@ -172,7 +169,9 @@ export interface Grant {
     id: number;
     granter_id: number;
     grantee_id: number;
+    grantee_username: string;
     file_id: number;
+    filename: string;
     status: 'active' | 'revoked' | 'expired';
     expires_at?: string;
     tx_hash?: string;
@@ -197,12 +196,15 @@ export interface ApprovedGrant {
 export interface HospitalPatient {
     id: number;
     patient_id: number;
+    patient_uuid: string;
     hospital_id: number;
     name: string;
     public_key: string;
+    status: 'active' | 'revoked';
     has_active_grant: boolean;
     last_access?: string;
     files_count: number;
+    expires_at?: string;
 }
 
 export interface PendingHospitalRequest {
@@ -212,6 +214,9 @@ export interface PendingHospitalRequest {
     hospital_id: number;
     status: 'pending' | 'approved' | 'denied';
     requested_at: string;
+    hospital_name?: string;
+    hospital_username?: string;
+    purpose?: string;
 }
 
 export interface HospitalAccess {
@@ -221,6 +226,17 @@ export interface HospitalAccess {
     has_access: boolean;
     granted_at?: string;
     expires_at?: string;
+    status: 'active' | 'revoked';
+    hospital_username?: string;
+    branch_name?: string;
+    location?: string;
+    revoked_at?: string;
+    withdrawn_by_hospital?: boolean;
+    file_count?: number;
+    specializations?: string;
+    purpose?: string;
+    requested_at?: string;
+    tx_hash?: string;
 }
 
 export interface HospitalInfo {
@@ -258,6 +274,7 @@ export interface AuditLogEntry {
     filename?: string;
     details?: string;
     tx_hash?: string;
+    timestamp?: string;
     block_number?: number;
     created_at: string;
 }
@@ -278,7 +295,7 @@ export interface RegisterResponse {
     user_id: number;
     uuid: string;
     role: UserRole;
-    token: string;
+    access_token: string;
     needs_profile_upload?: boolean;
 }
 
@@ -475,8 +492,16 @@ export async function hospitalUploadFile(
 /**
  * Get patient's records (files)
  */
-export async function getPatientRecords(patientId: number): Promise<RecordsListResponse> {
-    return apiRequest(`/access/records/${patientId}`);
+export async function getPatientRecords(patientId: number): Promise<{
+    data?: RecordsListResponse;
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<RecordsListResponse>(`/access/records/${patientId}`);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to get records' };
+    }
 }
 
 export interface DecryptedFileResponse {
@@ -656,83 +681,81 @@ export async function getApprovedGrants(): Promise<{
     return apiRequest('/access/my-grants');
 }
 
-// =============================================================================
-// Grant API
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Grant Management
+// -----------------------------------------------------------------------------
+
+export interface CreateGrantParams {
+    granter_id: number;
+    grantee_id?: number;
+    grantee_uuid?: string;
+    file_id: number;
+    expiry_seconds?: number;
+}
 
 /**
  * Create a new grant (grant access to a file)
  */
-export async function createGrant(
-    granteeId: number,
-    fileId: number,
-    expirySeconds?: number
-): Promise<{
-    grant_id: number;
-    grantee_id: number;
-    reencryption_key: string;
-    message: string;
+export async function createGrant(params: CreateGrantParams): Promise<{
+    data?: { grant_id: number; tx_hash?: string; message: string };
+    error?: string;
 }> {
-    return apiRequest('/grant/create', {
-        method: 'POST',
-        body: JSON.stringify({
-            granter_id: 0, // Will be extracted from JWT
-            grantee_id: granteeId,
-            file_id: fileId,
-            expires_at: expirySeconds
-                ? new Date(Date.now() + expirySeconds * 1000).toISOString()
-                : undefined,
-        }),
-    });
+    try {
+        const body: any = {
+            granter_id: params.granter_id,
+            file_id: params.file_id,
+        };
+
+        if (params.grantee_uuid) {
+            body.grantee_uuid = params.grantee_uuid;
+        } else if (params.grantee_id) {
+            body.grantee_id = params.grantee_id;
+        }
+
+        if (params.expiry_seconds) {
+            body.expires_at = new Date(Date.now() + params.expiry_seconds * 1000).toISOString();
+        }
+
+        const response = await apiRequest<{ grant_id: number; tx_hash?: string; message: string }>('/grant/create', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to create grant' };
+    }
 }
 
-/**
- * Create grant using grantee's UUID (preferred)
- */
-export async function createGrantByUuid(
-    granteeUuid: string,
-    fileId: number,
-    expirySeconds?: number
-): Promise<{
+// -----------------------------------------------------------------------------
+// Revocation
+// -----------------------------------------------------------------------------
+
+export interface RevokeGrantParams {
     grant_id: number;
-    grantee_id: number;
-    grantee_uuid: string;
-    reencryption_key: string;
-    message: string;
-}> {
-    return apiRequest('/grant/create', {
-        method: 'POST',
-        body: JSON.stringify({
-            granter_id: 0, // Will be extracted from JWT
-            grantee_uuid: granteeUuid,
-            file_id: fileId,
-            expires_at: expirySeconds
-                ? new Date(Date.now() + expirySeconds * 1000).toISOString()
-                : undefined,
-        }),
-    });
+    granter_id: number;
+    emit_onchain?: boolean;
 }
 
 /**
  * Revoke a grant
  */
-export async function revokeGrant(
-    grantId: number,
-    emitOnchain: boolean = false
-): Promise<{
-    grant_id: number;
-    status: string;
-    tx_hash?: string;
-    message: string;
+export async function revokeGrant(params: RevokeGrantParams): Promise<{
+    data?: { message: string; tx_hash?: string };
+    error?: string;
 }> {
-    return apiRequest('/grant/revoke', {
-        method: 'POST',
-        body: JSON.stringify({
-            grant_id: grantId,
-            granter_id: 0, // Will be verified from JWT
-            emit_onchain: emitOnchain,
-        }),
-    });
+    try {
+        const response = await apiRequest<{ message: string; tx_hash?: string }>('/grant/revoke', {
+            method: 'POST',
+            body: JSON.stringify({
+                grant_id: params.grant_id,
+                granter_id: params.granter_id,
+                emit_onchain: params.emit_onchain
+            }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to revoke grant' };
+    }
 }
 
 /**
@@ -759,8 +782,16 @@ export async function redeemGrant(
 /**
  * List grants created by a user
  */
-export async function listGrants(userId: number): Promise<{ grants: Grant[]; count: number }> {
-    return apiRequest(`/grant/list/${userId}`);
+export async function listGrants(userId: number): Promise<{
+    data?: { grants: Grant[]; count: number };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ grants: Grant[]; count: number }>(`/grant/list/${userId}`);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list grants' };
+    }
 }
 
 /**
@@ -842,10 +873,15 @@ export async function getHospitalAccessList(): Promise<{
  * Get hospital's patients (hospital only)
  */
 export async function getHospitalPatients(): Promise<{
-    patients: HospitalPatient[];
-    count: number;
+    data?: { patients: HospitalPatient[]; count: number };
+    error?: string;
 }> {
-    return apiRequest('/patients/hospital-patients');
+    try {
+        const response = await apiRequest<{ patients: HospitalPatient[]; count: number }>('/hospital/patients');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list patients' };
+    }
 }
 
 /**
@@ -1076,44 +1112,94 @@ export function clearStoredAuth(): void {
 /**
  * Register a new user V2 (patient or hospital)
  */
-export async function registerV2(data: RegisterRequest): Promise<RegisterResponse> {
-    return apiRequest('/auth/register-v2', {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
+export async function registerV2(data: RegisterRequest, hospitalSecret?: string): Promise<{
+    data?: RegisterResponse;
+    error?: string;
+}> {
+    try {
+        const body: any = { ...data };
+        if (hospitalSecret) {
+            body.hospital_secret = hospitalSecret;
+        }
+        const response = await apiRequest<RegisterResponse>('/auth/register-v2', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Registration failed' };
+    }
 }
 
 /**
  * Login V2 and get JWT token
  */
-export async function loginV2(username: string, password: string): Promise<LoginResponse> {
-    const response = await apiRequest<LoginResponse>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-    });
-    setAuthToken(response.access_token);
-    return response;
+export async function loginV2(credentials: { username: string; password: string }): Promise<{
+    data?: LoginResponse;
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<LoginResponse>('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify(credentials),
+        });
+        setAuthToken(response.access_token);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Login failed' };
+    }
 }
 
 /**
  * Get current authenticated user
  */
-export async function getCurrentUser(): Promise<User> {
-    return apiRequest('/auth/me');
+export async function getCurrentUser(): Promise<{
+    data?: User;
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<User>('/auth/me');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to fetch user' };
+    }
 }
 
 /**
  * Validate an invite token
  */
-export async function validateInviteToken(token: string): Promise<{ valid: boolean; hospital_name?: string }> {
-    return apiRequest(`/auth/validate-invite/\${token}`);
+export async function validateInviteToken(token: string): Promise<{
+    data?: { valid: boolean; hospital_name?: string };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ valid: boolean; hospital_name?: string }>(`/auth/validate-invite/${token}`);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Invalid invite token' };
+    }
 }
 
 /**
  * Generate a public invite (hospital only)
  */
-export async function generatePublicInvite(): Promise<{ invite_code: string; expires_at: string }> {
-    return apiRequest('/auth/create-invite', { method: 'POST' });
+export async function generatePublicInvite(password?: string, expiresSeconds?: number): Promise<{
+    data?: { invite_token: string; expires_at: string };
+    error?: string;
+}> {
+    try {
+        const body: any = {};
+        if (password) body.password = password;
+        if (expiresSeconds) body.expires_seconds = expiresSeconds;
+
+        const response = await apiRequest<{ invite_token: string; expires_at: string }>('/auth/create-invite', {
+            method: 'POST',
+            body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to generate invite' };
+    }
 }
 
 /**
@@ -1197,38 +1283,46 @@ export async function getHospitalAccessRequests(): Promise<{
 /**
  * Withdraw access request (hospital side)
  */
-export async function hospitalWithdrawAccess(requestId: number): Promise<{ message: string }> {
-    return apiRequest(`/access/withdraw-request/\${requestId}`, { method: 'POST' });
+export async function getPatientHospitals(): Promise<{
+    data?: { hospitals: HospitalAccess[]; count: number };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ hospitals: HospitalAccess[]; count: number }>('/access/my-hospitals');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list hospitals' };
+    }
 }
-
 /**
  * Get patient's hospitals list
- */
-export async function getPatientHospitals(): Promise<{
-    hospitals: HospitalAccess[];
-    count: number;
-}> {
-    return apiRequest('/patients/my-hospitals');
-}
-
-/**
  * Get patient's access history
  */
 export async function getPatientAccessHistory(): Promise<{
-    history: HospitalAccessRequestStatus[];
-    count: number;
+    data?: { history: HospitalAccessRequestStatus[]; count: number };
+    error?: string;
 }> {
-    return apiRequest('/patients/access-history');
+    try {
+        const response = await apiRequest<{ history: HospitalAccessRequestStatus[]; count: number }>('/patients/access-history');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to get access history' };
+    }
 }
 
 /**
  * Get patient's pending requests from hospitals
  */
 export async function getPatientPendingRequests(): Promise<{
-    requests: PendingHospitalRequest[];
-    count: number;
+    data?: { requests: PendingHospitalRequest[]; count: number };
+    error?: string;
 }> {
-    return apiRequest('/patients/pending-hospital-requests');
+    try {
+        const response = await apiRequest<{ requests: PendingHospitalRequest[]; count: number }>('/patients/pending-hospital-requests');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to get pending requests' };
+    }
 }
 
 /**
@@ -1242,91 +1336,155 @@ export async function getHospitalPublicKeyForRequest(requestId: number): Promise
 // Patient-to-Patient Sharing
 // =============================================================================
 
+export interface PatientAccessEntry {
+    id: number;
+    grant_id: number;
+    owner_id: number;
+    owner_name: string;
+    file_id: number;
+    filename: string;
+    cid: string;
+    status: "active" | "revoked";
+    granted_at: string;
+    expires_at?: string;
+}
 export interface PatientGrantEntry {
     id: number;
+    grant_id: number;
     grantee_id: number;
     grantee_name: string;
     grantee_uuid: string;
     file_id: number;
     filename: string;
     cid: string;
-    status: 'active' | 'revoked' | 'expired';
-    created_at: string;
+    status: "active" | "revoked" | "expired";
+    granted_at: string;
     expires_at?: string;
 }
 
-export interface PatientAccessEntry {
-    id: number;
-    granter_id: number;
-    granter_name: string;
-    file_id: number;
-    filename: string;
-    cid: string;
-    status: 'active' | 'revoked' | 'expired';
-    created_at: string;
-    expires_at?: string;
-}
-
-/**
- * Get files I've shared with other patients
- */
 export async function getMySharedFiles(): Promise<{
-    shares: PatientGrantEntry[];
-    count: number;
+    data?: { grants: PatientGrantEntry[]; count: number };
+    error?: string;
 }> {
-    return apiRequest('/sharing/my-shares');
+    try {
+        const response = await apiRequest<{ shares: any[]; count: number }>('/sharing/my-shares');
+        const grants: PatientGrantEntry[] = response.shares.map(s => ({
+            ...s,
+            id: s.id,
+            grant_id: s.id,
+            granted_at: s.created_at || s.granted_at,
+            status: s.status
+        }));
+        return { data: { grants, count: response.count } };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list shared files' };
+    }
 }
 
 /**
  * Get files shared with me by other patients
  */
 export async function getFilesSharedWithMe(): Promise<{
-    shares: PatientAccessEntry[];
-    count: number;
+    data?: { shares: PatientAccessEntry[]; count: number };
+    error?: string;
 }> {
-    return apiRequest('/sharing/shared-with-me');
+    try {
+        const response = await apiRequest<{ shares: PatientAccessEntry[]; count: number }>('/sharing/shared-with-me');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to fetch shared files' };
+    }
 }
 
 /**
  * Share file(s) with another patient
  */
 export async function shareFilesWithPatient(
-    patientUuid: string,
-    fileIds: number[],
-    expirySeconds?: number
-): Promise<{ grant_ids: number[]; message: string }> {
-    return apiRequest('/sharing/share', {
-        method: 'POST',
-        body: JSON.stringify({
-            grantee_uuid: patientUuid,
-            file_ids: fileIds,
-            expiry_seconds: expirySeconds,
-        }),
-    });
+    params: {
+        grantee_uuid: string;
+        file_ids: number[];
+        expires_seconds?: number;
+        purpose?: string;
+    },
+    secretKeyHex?: string,
+    signingKeyHex?: string
+): Promise<{
+    data?: {
+        grant_ids: number[];
+        message: string;
+        file_count?: number;
+        grantee_name?: string;
+        tx_hash?: string;
+    };
+    error?: string;
+}> {
+    try {
+        const body: any = { ...params };
+        if (secretKeyHex) body.secret_key_hex = secretKeyHex;
+        if (signingKeyHex) body.signing_key_hex = signingKeyHex;
+
+        const response = await apiRequest<{
+            grant_ids: number[];
+            message: string;
+            file_count?: number;
+            grantee_name?: string;
+            tx_hash?: string;
+        }>('/sharing/share', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to share files' };
+    }
 }
 
 /**
  * Revoke a patient share
  */
-export async function revokePatientShare(grantId: number): Promise<{ message: string }> {
-    return apiRequest(`/sharing/revoke/\${grantId}`, { method: 'POST' });
+export async function revokePatientShare(grantId: number): Promise<{
+    data?: { message: string; tx_hash?: string };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ message: string; tx_hash?: string }>(`/sharing/revoke/${grantId}`, { method: 'POST' });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to revoke share' };
+    }
 }
 
 /**
  * Bulk revoke patient shares
  */
-export async function bulkRevokePatientShares(grantIds: number[]): Promise<{ message: string; revoked_count: number }> {
-    return apiRequest('/sharing/bulk-revoke', {
-        method: 'POST',
-        body: JSON.stringify({ grant_ids: grantIds }),
-    });
+export async function bulkRevokePatientShares(grantIds: number[]): Promise<{
+    data?: { message: string; revoked_count: number; failed_count: number; tx_hashes: string[] };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ message: string; revoked_count: number; failed_count: number; tx_hashes: string[] }>('/sharing/bulk-revoke', {
+            method: 'POST',
+            body: JSON.stringify({ grant_ids: grantIds }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to revoke shares' };
+    }
 }
 
 /**
  * Get a patient's public key by UUID
  */
-export async function getPatientPublicKey(patientUuid: string): Promise<{ public_key: string }> {
-    return apiRequest(`/patients/public-key/\${patientUuid}`);
+export async function getPatientPublicKey(patientUuid: string): Promise<{
+    data?: { public_key: string; patient_name: string; patient_uuid: string; has_public_key: boolean };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ public_key: string; patient_name: string; patient_uuid: string; has_public_key: boolean }>(`/patients/public-key/${patientUuid}`);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to lookup patient' };
+    }
 }
 
 /**
@@ -1352,19 +1510,35 @@ export async function decryptSharedFile(
 /**
  * List files for a user
  */
-export async function listFiles(userId?: number): Promise<{ files: FileRecord[]; count: number }> {
-    const endpoint = userId ? `/files/list/\${userId}` : '/files/my-files';
-    return apiRequest(endpoint);
+export async function listFiles(userId?: number): Promise<{
+    data?: { files: FileRecord[]; count: number };
+    error?: string;
+}> {
+    try {
+        const endpoint = userId ? `/files/list/${userId}` : '/files/my-files';
+        const response = await apiRequest<{ files: FileRecord[]; count: number }>(endpoint);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list files' };
+    }
 }
 
 /**
  * Rename a file
  */
-export async function renameFile(fileId: number, newName: string): Promise<{ message: string }> {
-    return apiRequest(`/files/rename/\${fileId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ display_name: newName }),
-    });
+export async function renameFile(userId: number, fileId: number, newName: string): Promise<{
+    data?: { message: string };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ message: string }>(`/files/rename/${fileId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ filename: newName }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to rename file' };
+    }
 }
 
 /**
@@ -1382,34 +1556,73 @@ export async function getHospitalPatientFiles(patientId: number): Promise<{
 // =============================================================================
 
 export interface CategorizedAuditResponse {
-    uploads: AuditLogEntry[];
-    grants: AuditLogEntry[];
-    accesses: AuditLogEntry[];
-    revocations: AuditLogEntry[];
-    rotations: AuditLogEntry[];
-    total: number;
+    all_logs?: AuditLogEntry[];
+    uploads?: AuditLogEntry[];
+    grants?: AuditLogEntry[];
+    accesses?: AuditLogEntry[];
+    access_events?: AuditLogEntry[];
+    revocations?: AuditLogEntry[];
+    revokes?: AuditLogEntry[];
+    rotations?: AuditLogEntry[];
+    total?: number;
+    total_count?: number;
+    grants_count?: number;
+    access_count?: number;
 }
 
 /**
  * Get audit logs for current user
  */
-export async function getMyAuditLogs(limit?: number): Promise<CategorizedAuditResponse> {
-    const params = limit ? `?limit=\${limit}` : '';
-    return apiRequest(`/audit/my-logs\${params}`);
-}
+export async function getMyAuditLogs(limit?: number): Promise<{
+    data?: CategorizedAuditResponse;
+    error?: string;
+}> {
+    try {
+        const params = limit ? `?limit=${limit}` : '';
+        const response = await apiRequest<CategorizedAuditResponse>(`/audit/my-logs${params}`);
 
-/**
- * Get audit logs (alias)
- */
+        // Polyfill fields for frontend compatibility
+        const result: CategorizedAuditResponse = {
+            ...response,
+            access_events: response.access_events || response.accesses || [],
+            revokes: response.revokes || response.revocations || [],
+            total_count: response.total_count || response.total || 0,
+            all_logs: response.all_logs || []
+        };
+
+        // If all_logs is empty, aggregate from categories
+        if (!result.all_logs || result.all_logs.length === 0) {
+            result.all_logs = [
+                ...(result.uploads || []),
+                ...(result.grants || []),
+                ...(result.access_events || []),
+                ...(result.revokes || []),
+                ...(result.rotations || [])
+            ].sort((a, b) => new Date(b.timestamp || '').getTime() - new Date(a.timestamp || '').getTime());
+
+            result.total_count = result.all_logs.length;
+        }
+
+        return { data: result };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to fetch audit logs' };
+    }
+}
 export async function getAuditLogs(
     patientId?: number,
     limit?: number
-): Promise<{ logs: AuditLogEntry[]; count: number }> {
-    if (patientId) {
-        return getAuditLog(patientId, limit);
+): Promise<{
+    data?: { logs: AuditLogEntry[]; count: number };
+    error?: string;
+}> {
+    try {
+        const params = limit ? `?limit=${limit}` : '';
+        const endpoint = patientId ? `/audit/logs/${patientId}` : '/audit/logs';
+        const response = await apiRequest<{ logs: AuditLogEntry[]; count: number }>(`${endpoint}${params}`);
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to fetch audit logs' };
     }
-    const params = limit ? `?limit=\${limit}` : '';
-    return apiRequest(`/audit/logs\${params}`);
 }
 
 // =============================================================================
@@ -1482,3 +1695,4 @@ export async function listHospitalInviteTokens(): Promise<{
         return { error: error instanceof Error ? error.message : 'Failed to list invites' };
     }
 }
+
