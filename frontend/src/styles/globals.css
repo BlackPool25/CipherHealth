@@ -1,489 +1,522 @@
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Modern Healthcare Design System - 2025 */
-/* Clean, colorful, and user-friendly */
+/* =============================================================================
+   CipherHealth Neo-Brutalist Design System
+   Inspired by Paperfolio - Adapted for Healthcare
+   ============================================================================= */
 
 :root {
-  /* Light & airy base with depth */
-  --bg-primary: #f8faff;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f0f4ff;
-  --bg-card: #ffffff;
-  --bg-card-hover: #f8faff;
+  /* Base Colors */
+  --background: #FFFFFF;
+  --foreground: #0A0A0A;
+  --card: #FFFFFF;
+  --card-foreground: #0A0A0A;
   
-  /* Vibrant healthcare-inspired palette */
-  --accent-primary: #6366f1;       /* Indigo */
-  --accent-secondary: #8b5cf6;     /* Purple */
-  --accent-tertiary: #0ea5e9;      /* Sky blue */
-  --accent-teal: #14b8a6;          /* Teal for health */
-  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
-  --accent-gradient-soft: linear-gradient(135deg, #818cf8 0%, #a78bfa 50%, #f472b6 100%);
+  /* Primary - Bold Black */
+  --primary: #0A0A0A;
+  --primary-foreground: #FAFAFA;
   
-  /* High contrast text */
-  --text-primary: #1e293b;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  --text-on-accent: #ffffff;
+  /* Secondary - Soft Gray */
+  --secondary: #F5F5F5;
+  --secondary-foreground: #171717;
   
-  /* Status colors - vibrant & clear */
-  --success: #10b981;
-  --success-bg: #ecfdf5;
-  --warning: #f59e0b;
-  --warning-bg: #fffbeb;
-  --error: #ef4444;
-  --error-bg: #fef2f2;
-  --info: #0ea5e9;
-  --info-bg: #f0f9ff;
+  /* Muted */
+  --muted: #F5F5F5;
+  --muted-foreground: #717171;
   
-  /* Borders and effects */
-  --border-color: #e2e8f0;
-  --border-accent: rgba(99, 102, 241, 0.3);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.25);
+  /* Accent Colors - Healthcare Vibrant */
+  --accent: #F5F5F5;
+  --accent-foreground: #171717;
+  
+  /* Healthcare Brand Colors */
+  --health-coral: #FF6B7A;
+  --health-blue: #2F81F7;
+  --health-yellow: #FFC224;
+  --health-red: #FF4A60;
+  --health-teal: #14B8A6;
+  --health-purple: #8B5CF6;
+  --health-green: #10B981;
+  
+  /* Destructive */
+  --destructive: #E7000B;
+  --destructive-foreground: #F5F5F5;
+  
+  /* Border & Input */
+  --border: #0A0A0A;
+  --border-light: #E5E5E5;
+  --input: #FFFFFF;
+  --ring: #A1A1A1;
+  
+  /* Neo-Brutalist Variables */
+  --border-width: 3px;
+  --border-width-thick: 4px;
+  --shadow-brutal: 6px 6px 0px 0px rgba(0,0,0,1);
+  --shadow-brutal-sm: 4px 4px 0px 0px rgba(0,0,0,1);
+  --shadow-brutal-lg: 8px 8px 0px 0px rgba(0,0,0,1);
+  
+  /* Radius */
+  --radius: 16px;
+  --radius-sm: 12px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
 }
 
-/* Base styles */
+/* =============================================================================
+   Base Styles
+   ============================================================================= */
+
+* {
+  @apply border-border;
+}
+
 body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  @apply bg-background text-foreground;
+  font-family: 'Onest', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Colorful gradient background */
-.bg-mesh-gradient {
-  background: 
-    radial-gradient(ellipse at 0% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 50%),
-    radial-gradient(ellipse at 100% 0%, rgba(236, 72, 153, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 100% 100%, rgba(14, 165, 233, 0.1) 0%, transparent 50%),
-    radial-gradient(ellipse at 0% 100%, rgba(16, 185, 129, 0.08) 0%, transparent 50%),
-    linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+/* =============================================================================
+   Neo-Brutalist Cards
+   ============================================================================= */
+
+.card-brutal {
+  @apply bg-white rounded-2xl transition-all duration-300;
+  border: var(--border-width) solid var(--border);
 }
 
-/* Subtle grid pattern */
-.cyber-grid {
-  background-image: 
-    linear-gradient(rgba(99, 102, 241, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99, 102, 241, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
+.card-brutal:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-brutal-lg);
 }
 
-/* Modern card with subtle shadow */
-.glass-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  box-shadow: var(--shadow-md);
-  transition: all 0.3s ease;
+.card-brutal-static {
+  @apply bg-white rounded-2xl;
+  border: var(--border-width) solid var(--border);
+  box-shadow: var(--shadow-brutal);
 }
 
-.glass-card:hover {
-  box-shadow: var(--shadow-lg);
+.card-brutal-sm {
+  @apply bg-white rounded-xl;
+  border: var(--border-width) solid var(--border);
+  box-shadow: var(--shadow-brutal-sm);
 }
 
-/* Gradient accent card */
-.accent-card {
-  background: var(--accent-gradient);
-  border-radius: 20px;
+/* Accent Cards */
+.card-coral {
+  @apply card-brutal-static;
+  background: var(--health-coral);
+}
+
+.card-blue {
+  @apply card-brutal-static;
+  background: var(--health-blue);
   color: white;
-  box-shadow: var(--shadow-glow);
 }
 
-/* Primary button with gradient */
-.btn-neon {
-  background: var(--accent-gradient);
+.card-yellow {
+  @apply card-brutal-static;
+  background: var(--health-yellow);
+}
+
+.card-teal {
+  @apply card-brutal-static;
+  background: var(--health-teal);
   color: white;
-  font-weight: 600;
-  padding: 0.75rem 1.5rem;
-  border-radius: 12px;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
-  border: none;
-  cursor: pointer;
 }
 
-.btn-neon:hover {
+.card-purple {
+  @apply card-brutal-static;
+  background: var(--health-purple);
+  color: white;
+}
+
+/* =============================================================================
+   Neo-Brutalist Buttons
+   ============================================================================= */
+
+.btn-brutal {
+  @apply font-semibold px-6 py-3 rounded-xl transition-all duration-200;
+  border: var(--border-width) solid var(--border);
+  box-shadow: var(--shadow-brutal-sm);
+}
+
+.btn-brutal:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+  box-shadow: var(--shadow-brutal);
 }
 
-.btn-neon:active {
-  transform: translateY(0);
+.btn-brutal:active {
+  transform: translateY(2px);
+  box-shadow: 2px 2px 0px 0px rgba(0,0,0,1);
 }
 
-.btn-neon:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.btn-brutal:disabled {
+  @apply opacity-50 cursor-not-allowed;
   transform: none;
+  box-shadow: var(--shadow-brutal-sm);
 }
 
-/* Secondary ghost button */
+/* Primary Button */
+.btn-primary {
+  @apply btn-brutal bg-black text-white;
+}
+
+.btn-primary:hover {
+  @apply bg-gray-900;
+}
+
+/* Accent Buttons */
+.btn-coral {
+  @apply btn-brutal text-white;
+  background: var(--health-coral);
+}
+
+.btn-blue {
+  @apply btn-brutal text-white;
+  background: var(--health-blue);
+}
+
+.btn-yellow {
+  @apply btn-brutal text-black;
+  background: var(--health-yellow);
+}
+
+.btn-teal {
+  @apply btn-brutal text-white;
+  background: var(--health-teal);
+}
+
+.btn-green {
+  @apply btn-brutal text-white;
+  background: var(--health-green);
+}
+
+/* Outline Button */
+.btn-outline {
+  @apply btn-brutal bg-white text-black;
+}
+
+.btn-outline:hover {
+  @apply bg-gray-50;
+}
+
+/* Ghost Button */
 .btn-ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 2px solid var(--border-color);
-  padding: 0.7rem 1.5rem;
-  border-radius: 12px;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  cursor: pointer;
+  @apply font-medium px-4 py-2 rounded-lg transition-all duration-200;
+  border: 2px solid transparent;
 }
 
 .btn-ghost:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
+  @apply bg-gray-100;
 }
 
-/* Input styles */
-.input-dark {
-  background: var(--bg-secondary);
-  border: 2px solid var(--border-color);
-  color: var(--text-primary);
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  transition: all 0.3s ease;
-  font-size: 1rem;
+/* =============================================================================
+   Neo-Brutalist Inputs
+   ============================================================================= */
+
+.input-brutal {
+  @apply w-full px-4 py-3 rounded-xl bg-white text-black;
+  @apply placeholder:text-gray-400;
+  @apply focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2;
+  border: var(--border-width) solid var(--border);
+  font-size: 16px;
 }
 
-.input-dark:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+.input-brutal:focus {
+  box-shadow: var(--shadow-brutal-sm);
 }
 
-.input-dark::placeholder {
-  color: var(--text-muted);
+/* Input with error state */
+.input-brutal-error {
+  @apply input-brutal;
+  border-color: var(--health-red);
 }
 
-/* Status badges - colorful & clear */
+/* Input with success state */
+.input-brutal-success {
+  @apply input-brutal;
+  border-color: var(--health-green);
+}
+
+/* =============================================================================
+   Neo-Brutalist Badges
+   ============================================================================= */
+
+.badge-brutal {
+  @apply inline-flex items-center px-3 py-1 text-sm font-semibold rounded-lg;
+  border: 2px solid var(--border);
+}
+
 .badge-success {
-  background: var(--success-bg);
+  @apply badge-brutal;
+  background: #ECFDF5;
   color: #059669;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
+  border-color: #10B981;
 }
 
 .badge-warning {
-  background: var(--warning-bg);
-  color: #d97706;
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  @apply badge-brutal;
+  background: #FFFBEB;
+  color: #D97706;
+  border-color: #F59E0B;
 }
 
 .badge-error {
-  background: var(--error-bg);
-  color: #dc2626;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  @apply badge-brutal;
+  background: #FEF2F2;
+  color: #DC2626;
+  border-color: #EF4444;
 }
 
 .badge-info {
-  background: var(--info-bg);
-  color: #0284c7;
-  border: 1px solid rgba(14, 165, 233, 0.3);
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  @apply badge-brutal;
+  background: #EFF6FF;
+  color: #2563EB;
+  border-color: #3B82F6;
 }
 
-/* Floating animation */
+.badge-health {
+  @apply badge-brutal text-white;
+  background: var(--health-teal);
+  border-color: var(--health-teal);
+}
+
+/* =============================================================================
+   Navigation
+   ============================================================================= */
+
+.nav-brutal {
+  @apply bg-white px-5 py-3 rounded-xl max-w-4xl mx-auto;
+  border: var(--border-width-thick) solid var(--border);
+  box-shadow: var(--shadow-brutal);
+}
+
+.nav-link {
+  @apply text-lg font-bold transition-opacity duration-200;
+}
+
+.nav-link:hover {
+  @apply opacity-70;
+}
+
+.nav-link-active {
+  @apply nav-link;
+  background: var(--health-teal);
+  @apply text-white px-4 py-2 rounded-lg;
+}
+
+/* =============================================================================
+   Highlight Text
+   ============================================================================= */
+
+.highlight-coral {
+  @apply inline-block px-2 py-1 text-white;
+  background: var(--health-coral);
+}
+
+.highlight-blue {
+  @apply inline-block px-2 py-1 text-white;
+  background: var(--health-blue);
+}
+
+.highlight-yellow {
+  @apply inline-block px-2 py-1 text-black;
+  background: var(--health-yellow);
+}
+
+.highlight-teal {
+  @apply inline-block px-2 py-1 text-white;
+  background: var(--health-teal);
+}
+
+/* =============================================================================
+   Tables (Neo-Brutalist)
+   ============================================================================= */
+
+.table-brutal {
+  @apply w-full;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.table-brutal th {
+  @apply px-4 py-3 text-left font-bold bg-gray-100 text-black;
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.table-brutal td {
+  @apply px-4 py-3;
+  border-bottom: 2px solid var(--border-light);
+}
+
+.table-brutal tr:last-child td {
+  border-bottom: none;
+}
+
+.table-brutal tr:hover td {
+  @apply bg-gray-50;
+}
+
+/* =============================================================================
+   Drop Zone
+   ============================================================================= */
+
+.drop-zone-brutal {
+  @apply rounded-2xl p-8 transition-all duration-300 cursor-pointer;
+  border: var(--border-width) dashed var(--border);
+  background: var(--secondary);
+}
+
+.drop-zone-brutal:hover {
+  background: #EEEEEE;
+  box-shadow: var(--shadow-brutal-sm);
+}
+
+.drop-zone-brutal.active {
+  border-style: solid;
+  background: var(--health-yellow);
+  box-shadow: var(--shadow-brutal);
+}
+
+/* =============================================================================
+   Status Indicators
+   ============================================================================= */
+
+.status-dot {
+  @apply w-3 h-3 rounded-full inline-block;
+}
+
+.status-dot-connected {
+  background: var(--health-green);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.status-dot-disconnected {
+  @apply bg-gray-400;
+}
+
+.status-dot-warning {
+  background: var(--health-yellow);
+  box-shadow: 0 0 8px rgba(255, 194, 36, 0.6);
+}
+
+/* =============================================================================
+   Avatar
+   ============================================================================= */
+
+.avatar-brutal {
+  @apply flex items-center justify-center font-bold rounded-full;
+  border: var(--border-width) solid var(--border);
+}
+
+.avatar-brutal-sm {
+  @apply avatar-brutal w-8 h-8 text-sm;
+}
+
+.avatar-brutal-md {
+  @apply avatar-brutal w-10 h-10 text-base;
+}
+
+.avatar-brutal-lg {
+  @apply avatar-brutal w-14 h-14 text-xl;
+}
+
+/* =============================================================================
+   Animations
+   ============================================================================= */
+
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--border); }
+  50% { border-color: var(--health-teal); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
 
 .animate-float {
   animation: float 3s ease-in-out infinite;
 }
 
-/* Pulse glow animation */
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.5); }
+.animate-pulse-border {
+  animation: pulse-border 2s ease-in-out infinite;
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
 }
 
-/* Shimmer loading effect */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* =============================================================================
+   Utilities
+   ============================================================================= */
+
+.gradient-text-health {
+  @apply bg-clip-text text-transparent;
+  background-image: linear-gradient(135deg, var(--health-teal) 0%, var(--health-blue) 100%);
 }
 
-.shimmer {
-  background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+.section-heading {
+  @apply text-4xl md:text-5xl font-bold mb-4;
 }
 
-/* Progress bar */
-.progress-glow {
-  background: var(--accent-gradient);
-  border-radius: 999px;
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+.section-subheading {
+  @apply text-lg text-gray-600 font-medium max-w-2xl;
 }
 
-/* Card lift on hover */
-.card-lift {
-  transition: all 0.3s ease;
-}
+/* File Type Icons */
+.file-type-pdf { background: #FEF2F2; color: #DC2626; }
+.file-type-doc { background: #EFF6FF; color: #2563EB; }
+.file-type-image { background: #ECFDF5; color: #059669; }
+.file-type-other { background: #F8FAFC; color: #64748B; }
 
-.card-lift:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
-}
-
-/* Custom scrollbar */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-tertiary);
+  background: var(--secondary);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #CBD5E1;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--accent-primary);
+  background: var(--border);
 }
 
-/* Gradient text */
-.gradient-text {
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
+/* =============================================================================
+   Responsive Helpers
+   ============================================================================= */
 
-/* File drop zone */
-.drop-zone {
-  border: 2px dashed var(--border-color);
-  border-radius: 20px;
-  transition: all 0.3s ease;
-  background: var(--bg-tertiary);
-}
-
-.drop-zone:hover,
-.drop-zone.active {
-  border-color: var(--accent-primary);
-  background: rgba(99, 102, 241, 0.05);
-  box-shadow: 0 0 30px rgba(99, 102, 241, 0.1);
-}
-
-/* Timeline connector */
-.timeline-connector {
-  width: 3px;
-  background: linear-gradient(to bottom, var(--accent-primary) 0%, var(--accent-tertiary) 100%);
-  border-radius: 2px;
-}
-
-/* Stats card */
-.stats-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 1.25rem;
-  transition: all 0.3s ease;
-  box-shadow: var(--shadow-sm);
-}
-
-.stats-card:hover {
-  border-color: var(--border-accent);
-  box-shadow: var(--shadow-md);
-}
-
-/* Navigation */
-.nav-glass {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border-color);
-}
-
-/* Feature icons with colored backgrounds */
-.icon-box {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-}
-
-.icon-box-indigo {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-
-.icon-box-emerald {
-  background: linear-gradient(135deg, #10b981 0%, #14b8a6 100%);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-}
-
-.icon-box-pink {
-  background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
-  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
-}
-
-.icon-box-sky {
-  background: linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%);
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
-}
-
-.icon-box-amber {
-  background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
-
-/* Avatar placeholder */
-.avatar-gradient {
-  background: var(--accent-gradient);
-  color: white;
-  font-weight: 600;
-}
-
-/* Section headings */
-.section-title {
-  color: var(--text-primary);
-  font-weight: 700;
-  font-size: 1.25rem;
-}
-
-.section-subtitle {
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
-
-/* Interactive list items */
-.list-item-hover {
-  transition: all 0.2s ease;
-  border-radius: 12px;
-  padding: 1rem;
-}
-
-.list-item-hover:hover {
-  background: var(--bg-tertiary);
-}
-
-/* Colorful file type indicators */
-.file-type-pdf { background: #fef2f2; color: #dc2626; }
-.file-type-doc { background: #eff6ff; color: #2563eb; }
-.file-type-image { background: #ecfdf5; color: #059669; }
-.file-type-other { background: #f8fafc; color: #64748b; }
-
-/* Empty state styling */
-.empty-state {
-  text-align: center;
-  padding: 3rem 1.5rem;
-}
-
-.empty-state-icon {
-  width: 80px;
-  height: 80px;
-  margin: 0 auto 1rem;
-  background: var(--bg-tertiary);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2rem;
-}
-
-/* Connection status indicator */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.status-dot-connected {
-  background: var(--success);
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
-}
-
-.status-dot-disconnected {
-  background: var(--text-muted);
-}
-
-/* Tooltip */
-.tooltip {
-  background: var(--text-primary);
-  color: white;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  font-size: 0.75rem;
-  box-shadow: var(--shadow-lg);
-}
-
-/* Animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
+@media (max-width: 768px) {
+  .nav-brutal {
+    @apply px-3 py-2;
+    box-shadow: var(--shadow-brutal-sm);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  
+  .card-brutal-static {
+    box-shadow: var(--shadow-brutal-sm);
   }
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.3s ease-out forwards;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
+  
+  .section-heading {
+    @apply text-3xl;
   }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.animate-slideIn {
-  animation: slideIn 0.3s ease-out forwards;
-}
-
-@keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.animate-scaleIn {
-  animation: scaleIn 0.2s ease-out forwards;
 }

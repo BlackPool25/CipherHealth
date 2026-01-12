@@ -1,5 +1,5 @@
 /**
- * Dashboard Page - Modern Colorful Theme
+ * Dashboard Page - Neo-Brutalist Design
  * User's main landing page showing records and navigation
  */
 
@@ -14,6 +14,26 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useWalletContext } from '@/contexts/WalletContext';
 import { listFiles, listGrants, getHospitalPatients, HospitalPatient, getCurrentUser, getMySharedFiles, PatientGrantEntry, getPatientHospitals, HospitalAccess } from '@/lib/api';
 import KeyManager from '@/lib/KeyManager';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  FolderOpen,
+  Upload,
+  Users,
+  ClipboardList,
+  Shield,
+  Eye,
+  Share2,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Lock,
+  ArrowRight,
+  Building2,
+  Key,
+  Zap
+} from 'lucide-react';
 
 interface CombinedGrant {
   id: number;
@@ -46,16 +66,16 @@ interface SelectedFile {
 
 const getFileTypeInfo = (filename: string) => {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
-  const types: Record<string, { icon: string; bg: string; text: string }> = {
-    pdf: { icon: '📄', bg: 'bg-red-50', text: 'text-red-600' },
-    doc: { icon: '📝', bg: 'bg-blue-50', text: 'text-blue-600' },
-    docx: { icon: '📝', bg: 'bg-blue-50', text: 'text-blue-600' },
-    txt: { icon: '📃', bg: 'bg-gray-50', text: 'text-gray-600' },
-    jpg: { icon: '🖼️', bg: 'bg-emerald-50', text: 'text-emerald-600' },
-    jpeg: { icon: '🖼️', bg: 'bg-emerald-50', text: 'text-emerald-600' },
-    png: { icon: '🖼️', bg: 'bg-emerald-50', text: 'text-emerald-600' },
+  const types: Record<string, { icon: string; bg: string }> = {
+    pdf: { icon: '📄', bg: 'bg-[#FEF2F2]' },
+    doc: { icon: '📝', bg: 'bg-[#EFF6FF]' },
+    docx: { icon: '📝', bg: 'bg-[#EFF6FF]' },
+    txt: { icon: '📃', bg: 'bg-gray-100' },
+    jpg: { icon: '🖼️', bg: 'bg-[#ECFDF5]' },
+    jpeg: { icon: '🖼️', bg: 'bg-[#ECFDF5]' },
+    png: { icon: '🖼️', bg: 'bg-[#ECFDF5]' },
   };
-  return types[ext] || { icon: '📁', bg: 'bg-gray-50', text: 'text-gray-600' };
+  return types[ext] || { icon: '📁', bg: 'bg-gray-100' };
 };
 
 const formatDate = (dateStr: string) => {
@@ -77,50 +97,56 @@ function FileRow({ file, isExpanded, onToggle, onView, onShare }: {
   onShare: () => void;
 }) {
   const typeInfo = getFileTypeInfo(file.filename);
-  
+
   return (
     <div className="overflow-hidden">
-      <div 
-        className={`flex items-center gap-4 p-4 cursor-pointer transition-all duration-200 hover:bg-indigo-50/50 ${isExpanded ? 'bg-indigo-50/50' : ''}`}
+      <div
+        className={`flex items-center gap-4 p-4 cursor-pointer transition-all duration-200 hover:bg-gray-50 ${isExpanded ? 'bg-gray-50' : ''}`}
         onClick={onToggle}
       >
-        <div className={`${typeInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 border border-gray-100`}>
+        <div className={`${typeInfo.bg} w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 border-2 border-black`}>
           <span className="text-xl">{typeInfo.icon}</span>
         </div>
         <div className="flex-1 min-w-0">
-          <h4 className="font-semibold text-gray-900 truncate">{file.filename}</h4>
-          <p className="text-sm text-gray-500">{formatDate(file.created_at)}</p>
+          <h4 className="font-bold text-gray-900 truncate">{file.filename}</h4>
+          <p className="text-sm text-gray-500 font-medium">{formatDate(file.created_at)}</p>
         </div>
-        <span className="badge-success hidden sm:inline-flex items-center gap-1">
-          🔒 Encrypted
-        </span>
-        <svg 
-          className={`w-5 h-5 text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <Badge variant="success" className="hidden sm:flex">
+          <Lock className="w-3 h-3" />
+          Encrypted
+        </Badge>
+        {isExpanded ? (
+          <ChevronUp className="w-5 h-5 text-gray-500" />
+        ) : (
+          <ChevronDown className="w-5 h-5 text-gray-500" />
+        )}
       </div>
-      
+
       <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-48 opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="px-4 pb-4 pt-2 ml-16 border-t border-gray-100">
+        <div className="px-4 pb-4 pt-2 ml-16 border-t-2 border-gray-100">
           <div className="mb-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Content ID (CID)</p>
-            <code className="text-xs text-gray-600 font-mono bg-gray-50 px-2 py-1 rounded">{file.cid.slice(0, 24)}...{file.cid.slice(-8)}</code>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-bold">Content ID (CID)</p>
+            <code className="text-xs text-gray-600 font-mono bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-200 block truncate">
+              {file.cid.slice(0, 24)}...{file.cid.slice(-8)}
+            </code>
           </div>
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex items-center gap-3">
+            <Button
               onClick={(e) => { e.stopPropagation(); onView(); }}
-              className="btn-neon text-sm py-2 px-4"
+              size="sm"
+              variant="teal"
             >
+              <Eye className="w-4 h-4" />
               View & Decrypt
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={(e) => { e.stopPropagation(); onShare(); }}
-              className="btn-ghost text-sm py-2 px-4"
+              size="sm"
+              variant="outline"
             >
+              <Share2 className="w-4 h-4" />
               Share
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -132,7 +158,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, isHospital } = useAuth();
   const { isConnected, isCorrectNetwork } = useWalletContext();
-  
+
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [hospitalPatients, setHospitalPatients] = useState<HospitalPatient[]>([]);
@@ -145,9 +171,8 @@ export default function DashboardPage() {
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [hasEncryptionKeys, setHasEncryptionKeys] = useState<boolean | null>(null);
 
-  // Combine active hospital access (for patients) and patient shares, sorted by time
+  // Combine active hospital access (for patients) and patient shares
   const combinedGrants = useMemo<CombinedGrant[]>(() => {
-    // For patients: hospitals that currently have access to them
     const hospitalAccessEntries: CombinedGrant[] = activeHospitalAccess
       .filter(h => h.status === 'active')
       .map(h => ({
@@ -157,8 +182,7 @@ export default function DashboardPage() {
         status: 'active',
         granted_at: h.granted_at || '',
       }));
-    
-    // Patient-to-patient shares (files they've shared)
+
     const patientGrantEntries: CombinedGrant[] = patientShares.map(p => ({
       id: p.grant_id,
       type: 'patient' as const,
@@ -167,8 +191,7 @@ export default function DashboardPage() {
       status: p.status,
       granted_at: p.granted_at,
     }));
-    
-    // Combine and sort by granted_at (newest first)
+
     const all = [...hospitalAccessEntries, ...patientGrantEntries];
     return all.sort((a, b) => {
       if (!a.granted_at && !b.granted_at) return 0;
@@ -203,15 +226,13 @@ export default function DashboardPage() {
 
     if (filesResult.data) setFiles(filesResult.data.files || []);
     if (grantsResult.data) setGrants(grantsResult.data.grants || []);
-    
-    // Check if user has encryption keys set up
+
     if (userResult.data) {
       const hasServerKey = !!userResult.data.public_key;
       const hasLocalKey = KeyManager.hasKeypair(String(user.id));
       setHasEncryptionKeys(hasServerKey && hasLocalKey);
     }
 
-    // Load hospital patients if user is a hospital
     if (isHospital) {
       const patientsResult = await getHospitalPatients();
       if (patientsResult.data) {
@@ -219,20 +240,17 @@ export default function DashboardPage() {
         setHospitalPatients(activePatients);
       }
     } else {
-      // Load patient data: hospitals with access + files shared with other patients
       const [hospitalsResult, sharesResult] = await Promise.all([
         getPatientHospitals(),
         getMySharedFiles(),
       ]);
-      
+
       if (hospitalsResult.data) {
-        // Only active hospital access
         const activeAccess = hospitalsResult.data.hospitals.filter((h: HospitalAccess) => h.status === 'active');
         setActiveHospitalAccess(activeAccess);
       }
-      
+
       if (sharesResult.data) {
-        // Only active patient shares
         const activeShares = sharesResult.data.grants.filter(g => g.status === 'active');
         setPatientShares(activeShares);
       }
@@ -247,8 +265,8 @@ export default function DashboardPage() {
       <Layout>
         <div className="flex items-center justify-center h-64">
           <div className="relative">
-            <div className="w-16 h-16 border-4 border-indigo-100 rounded-full"></div>
-            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+            <div className="w-16 h-16 border-4 border-gray-200 rounded-full"></div>
+            <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-[#14B8A6] rounded-full animate-spin"></div>
           </div>
         </div>
       </Layout>
@@ -260,52 +278,46 @@ export default function DashboardPage() {
   return (
     <Layout>
       <NetworkCheck />
-      
+
       {/* Encryption Keys Warning Banner */}
       {hasEncryptionKeys === false && (
-        <div className="mb-6 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 shadow-sm">
+        <div className="mb-6 p-4 bg-[#FFFBEB] border-[3px] border-[#F59E0B] rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex items-start gap-4">
-            <div className="flex-shrink-0 w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
-              <span className="text-xl">⚠️</span>
+            <div className="flex-shrink-0 w-12 h-12 bg-[#FFC224] rounded-xl border-2 border-black flex items-center justify-center">
+              <Key className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-amber-800 mb-1">
+              <h3 className="font-bold text-[#B45309] mb-1">
                 {isHospital ? 'Set Up Hospital Encryption Keys' : 'Set Up Encryption Keys'}
               </h3>
-              <p className="text-amber-700 text-sm mb-3">
-                {isHospital 
-                  ? 'You need to set up encryption keys before you can decrypt patient files shared with you. Without keys, you cannot access any patient records.'
-                  : 'You need to set up encryption keys to securely receive and decrypt your health records.'
-                }
+              <p className="text-[#92400E] text-sm mb-3 font-medium">
+                {isHospital
+                  ? 'You need encryption keys to decrypt patient files shared with you.'
+                  : 'Set up encryption keys to securely receive and decrypt your health records.'}
               </p>
-              <Link 
-                href="/profile"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
-              >
-                <span>🔐</span>
-                <span>Set Up Keys Now</span>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
+              <Link href="/profile">
+                <Button variant="yellow" size="sm">
+                  <Key className="w-4 h-4" />
+                  Set Up Keys
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
               </Link>
             </div>
           </div>
         </div>
       )}
-      
+
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-2">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-1 shadow-lg shadow-indigo-500/25">
-            <div className="w-full h-full rounded-xl bg-white flex items-center justify-center">
-              <span className="text-3xl">👋</span>
-            </div>
+          <div className="w-16 h-16 rounded-2xl bg-[#14B8A6] border-[4px] border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+            <span className="text-3xl">👋</span>
           </div>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Welcome back, <span className="gradient-text">{user?.username}</span>!
+              Welcome back, <span className="highlight-teal px-2">{user?.username}</span>!
             </h1>
-            <p className="text-gray-600">
+            <p className="text-gray-600 font-medium">
               Manage your health records securely on the blockchain
             </p>
           </div>
@@ -313,156 +325,144 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="glass-card p-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <Card hoverable={true} className="p-5">
           <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-indigo">
-              <span className="text-white">📁</span>
+            <div className="w-12 h-12 rounded-xl bg-[#2F81F7] border-2 border-black flex items-center justify-center">
+              <FolderOpen className="w-6 h-6 text-white" />
             </div>
             <div>
               <p className="text-3xl font-bold text-gray-900">{files.length}</p>
-              <p className="text-sm text-gray-500 font-medium">Total Files</p>
+              <p className="text-sm text-gray-500 font-bold">Total Files</p>
             </div>
           </div>
-        </div>
-        <div className="glass-card p-5">
+        </Card>
+        <Card hoverable={true} className="p-5">
           <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-emerald">
-              <span className="text-white">🔗</span>
+            <div className="w-12 h-12 rounded-xl bg-[#10B981] border-2 border-black flex items-center justify-center">
+              <Share2 className="w-6 h-6 text-white" />
             </div>
             <div>
               <p className="text-3xl font-bold text-gray-900">{combinedGrants.length}</p>
-              <p className="text-sm text-gray-500 font-medium">Active Grants</p>
+              <p className="text-sm text-gray-500 font-bold">Active Grants</p>
             </div>
           </div>
-        </div>
-        <div className="glass-card p-5">
+        </Card>
+        <Card hoverable={true} className="p-5">
           <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-pink">
-              <span className="text-white">🔒</span>
+            <div className="w-12 h-12 rounded-xl bg-[#FF6B7A] border-2 border-black flex items-center justify-center">
+              <Lock className="w-6 h-6 text-white" />
             </div>
             <div>
               <p className="text-3xl font-bold text-gray-900">100%</p>
-              <p className="text-sm text-gray-500 font-medium">Encrypted</p>
+              <p className="text-sm text-gray-500 font-bold">Encrypted</p>
             </div>
           </div>
-        </div>
-        <div className="glass-card p-5">
+        </Card>
+        <Card hoverable={true} className="p-5">
           <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-sky">
-              <span className="text-white">⛓️</span>
+            <div className="w-12 h-12 rounded-xl bg-[#8B5CF6] border-2 border-black flex items-center justify-center">
+              <Zap className="w-6 h-6 text-white" />
             </div>
             <div>
               <p className="text-3xl font-bold text-gray-900">{isCorrectNetwork ? 'Live' : '—'}</p>
-              <p className="text-sm text-gray-500 font-medium">On Sepolia</p>
+              <p className="text-sm text-gray-500 font-bold">On Sepolia</p>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Quick Actions - Role Based */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        {/* Upload - Only for Hospitals */}
         {isHospital ? (
-          <Link 
-            href="/upload"
-            className="glass-card p-6 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 group card-lift"
-          >
-            <div className="flex items-center gap-4">
-              <div className="icon-box icon-box-indigo group-hover:scale-110 transition-transform">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
+          <Link href="/upload">
+            <Card hoverable={true} className="p-6 group cursor-pointer">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-xl bg-[#2F81F7] border-2 border-black flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Upload className="w-7 h-7 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-gray-900">Upload Record</h3>
+                  <p className="text-sm text-gray-500 font-medium">Upload for patients</p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-lg text-gray-900 group-hover:text-indigo-600 transition-colors">Upload Record</h3>
-                <p className="text-sm text-gray-500">Upload for patients</p>
-              </div>
-            </div>
+            </Card>
           </Link>
         ) : (
-          <Link 
-            href="/hospital-access"
-            className="glass-card p-6 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 group card-lift"
-          >
-            <div className="flex items-center gap-4">
-              <div className="icon-box icon-box-indigo group-hover:scale-110 transition-transform">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                </svg>
+          <Link href="/hospital-access">
+            <Card hoverable={true} className="p-6 group cursor-pointer">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-xl bg-[#2F81F7] border-2 border-black flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Building2 className="w-7 h-7 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-gray-900">Hospital Access</h3>
+                  <p className="text-sm text-gray-500 font-medium">Manage who can upload</p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-lg text-gray-900 group-hover:text-indigo-600 transition-colors">Hospital Access</h3>
-                <p className="text-sm text-gray-500">Manage who can upload</p>
-              </div>
-            </div>
+            </Card>
           </Link>
         )}
-        
-        <Link 
-          href={isHospital ? "/my-patients" : "/hospital-access"}
-          className="glass-card p-6 hover:shadow-xl hover:shadow-emerald-500/10 transition-all duration-300 group card-lift"
-        >
-          <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-emerald group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-              </svg>
+
+        <Link href={isHospital ? "/my-patients" : "/hospital-access"}>
+          <Card hoverable={true} className="p-6 group cursor-pointer">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-xl bg-[#10B981] border-2 border-black flex items-center justify-center group-hover:scale-110 transition-transform">
+                {isHospital ? <Users className="w-7 h-7 text-white" /> : <Shield className="w-7 h-7 text-white" />}
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">
+                  {isHospital ? 'My Patients' : 'Grant Access'}
+                </h3>
+                <p className="text-sm text-gray-500 font-medium">
+                  {isHospital ? 'View & request patients' : 'Share with providers'}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-lg text-gray-900 group-hover:text-emerald-600 transition-colors">
-                {isHospital ? 'My Patients' : 'Grant Access'}
-              </h3>
-              <p className="text-sm text-gray-500">
-                {isHospital ? 'View & request patients' : 'Share with providers'}
-              </p>
-            </div>
-          </div>
+          </Card>
         </Link>
-        
-        <Link 
-          href="/audit"
-          className="glass-card p-6 hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 group card-lift"
-        >
-          <div className="flex items-center gap-4">
-            <div className="icon-box icon-box-pink group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
+
+        <Link href="/audit">
+          <Card hoverable={true} className="p-6 group cursor-pointer">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-xl bg-[#FF6B7A] border-2 border-black flex items-center justify-center group-hover:scale-110 transition-transform">
+                <ClipboardList className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">View Audit Log</h3>
+                <p className="text-sm text-gray-500 font-medium">Track all activity</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-lg text-gray-900 group-hover:text-purple-600 transition-colors">View Audit Log</h3>
-              <p className="text-sm text-gray-500">Track all activity</p>
-            </div>
-          </div>
+          </Card>
         </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Files - Different view for hospitals vs patients */}
+        {/* Recent Files */}
         <div className="lg:col-span-2">
-          <div className="glass-card overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <Card hoverable={false} className="overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b-2 border-black">
               <div className="flex items-center gap-3">
-                <div className="icon-box icon-box-indigo">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+                <div className="w-10 h-10 rounded-lg bg-[#2F81F7] border-2 border-black flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-white" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">
                     {isHospital ? 'Patient Records' : 'Your Records'}
                   </h2>
-                  <p className="text-sm text-gray-500">
-                    {isHospital 
-                      ? 'Manage files for your patients' 
+                  <p className="text-sm text-gray-500 font-medium">
+                    {isHospital
+                      ? 'Manage files for your patients'
                       : `${files.length} encrypted file${files.length !== 1 ? 's' : ''}`}
                   </p>
                 </div>
               </div>
               {isHospital && (
-                <Link href="/upload" className="btn-neon text-sm py-2 px-4">
-                  + Upload
+                <Link href="/upload">
+                  <Button size="sm" variant="blue">
+                    <Upload className="w-4 h-4" />
+                    Upload
+                  </Button>
                 </Link>
               )}
             </div>
@@ -471,23 +471,23 @@ export default function DashboardPage() {
               /* Hospital View - Show patients list */
               <div className="p-4">
                 {hospitalPatients.length === 0 ? (
-                  <div className="text-center py-6">
-                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center mx-auto mb-4">
-                      <span className="text-3xl">👥</span>
+                  <div className="text-center py-8">
+                    <div className="w-16 h-16 rounded-2xl bg-[#2F81F7] border-[3px] border-black flex items-center justify-center mx-auto mb-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                      <Users className="w-8 h-8 text-white" />
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Patients Yet</h3>
-                    <p className="text-gray-500 mb-4 max-w-sm mx-auto text-sm">
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">No Patients Yet</h3>
+                    <p className="text-gray-500 mb-4 max-w-sm mx-auto text-sm font-medium">
                       Request access from patients to view and manage their health records
                     </p>
-                    <Link href="/my-patients" className="btn-neon text-sm">
-                      Request Patient Access
+                    <Link href="/my-patients">
+                      <Button variant="blue">Request Patient Access</Button>
                     </Link>
                   </div>
                 ) : (
                   <>
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold text-gray-900">Your Patients ({hospitalPatients.length})</h3>
-                      <Link href="/my-patients" className="text-indigo-600 text-sm hover:underline">
+                      <h3 className="font-bold text-gray-900">Your Patients ({hospitalPatients.length})</h3>
+                      <Link href="/my-patients" className="text-[#2F81F7] text-sm font-bold hover:underline">
                         View All →
                       </Link>
                     </div>
@@ -496,67 +496,48 @@ export default function DashboardPage() {
                         <Link
                           key={patient.patient_uuid}
                           href={`/patient-files?patientUuid=${patient.patient_uuid}`}
-                          className="flex items-center gap-3 p-3 rounded-xl hover:bg-indigo-50 transition-all group"
+                          className="flex items-center gap-3 p-3 rounded-xl border-2 border-gray-200 hover:border-black hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all group"
                         >
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                          <div className="w-10 h-10 rounded-full bg-[#14B8A6] border-2 border-black flex items-center justify-center text-white font-bold">
                             {(patient.patient_name || 'P').charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium text-gray-900 truncate group-hover:text-indigo-600">
+                            <p className="font-bold text-gray-900 truncate">
                               {patient.patient_name || 'Patient (Profile incomplete)'}
                             </p>
-                            <p className="text-xs text-gray-400 font-mono truncate">
-                              {patient.patient_uuid}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {patient.profile_completed && patient.age ? `${patient.age} yrs` : ''} 
-                              {patient.profile_completed && patient.gender ? ` • ${patient.gender}` : ''}
-                              {patient.profile_completed && patient.blood_group ? ` • ${patient.blood_group}` : ''}
-                            </p>
-                            <p className="text-xs text-gray-400">
+                            <p className="text-xs text-gray-500 font-medium">
                               {patient.file_count} files • Access {patient.expires_at ? 'expires ' + formatDate(patient.expires_at) : 'permanent'}
                             </p>
                           </div>
-                          <svg className="w-5 h-5 text-gray-400 group-hover:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
+                          <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-black" />
                         </Link>
                       ))}
                     </div>
-                    {hospitalPatients.length > 5 && (
-                      <div className="mt-3 pt-3 border-t border-gray-100 text-center">
-                        <Link href="/patient-files" className="text-indigo-600 text-sm hover:underline">
-                          View all {hospitalPatients.length} patients →
-                        </Link>
-                      </div>
-                    )}
                   </>
                 )}
               </div>
             ) : isLoadingFiles ? (
               <div className="flex items-center justify-center h-32">
                 <div className="relative">
-                  <div className="w-8 h-8 border-3 border-indigo-100 rounded-full"></div>
-                  <div className="absolute top-0 left-0 w-8 h-8 border-3 border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
+                  <div className="w-10 h-10 border-3 border-gray-200 rounded-full"></div>
+                  <div className="absolute top-0 left-0 w-10 h-10 border-3 border-transparent border-t-[#14B8A6] rounded-full animate-spin"></div>
                 </div>
               </div>
             ) : files.length === 0 ? (
               <div className="text-center py-12 px-6">
-                <div className="w-20 h-20 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-10 h-10 text-indigo-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+                <div className="w-20 h-20 rounded-2xl bg-gray-100 border-[3px] border-black flex items-center justify-center mx-auto mb-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <FileText className="w-10 h-10 text-gray-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">No records yet</h3>
-                <p className="text-gray-500 mb-4">
-                  {isHospital 
-                    ? 'Upload health records for your patients' 
+                <h3 className="text-lg font-bold text-gray-900 mb-1">No records yet</h3>
+                <p className="text-gray-500 mb-4 font-medium">
+                  {isHospital
+                    ? 'Upload health records for your patients'
                     : 'Your health records are protected with end-to-end encryption'}
                 </p>
                 {isHospital ? (
-                  <Link href="/upload" className="btn-neon">Upload a record</Link>
+                  <Link href="/upload"><Button variant="teal">Upload a record</Button></Link>
                 ) : (
-                  <Link href="/hospital-access" className="btn-neon">Manage Hospital Access</Link>
+                  <Link href="/hospital-access"><Button variant="teal">Manage Hospital Access</Button></Link>
                 )}
               </div>
             ) : (
@@ -571,35 +552,37 @@ export default function DashboardPage() {
                     onShare={() => router.push(`/hospital-access?section=patient`)}
                   />
                 ))}
-                
+
                 {files.length > 5 && (
                   <div className="p-4">
                     <button
                       onClick={() => setShowAllFiles(!showAllFiles)}
-                      className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-gray-500 hover:text-indigo-600 transition-colors"
+                      className="w-full flex items-center justify-center gap-2 py-2 text-sm font-bold text-gray-500 hover:text-black transition-colors"
                     >
-                      {showAllFiles ? 'Show Less' : `Show ${files.length - 5} More Records`}
+                      {showAllFiles ? (
+                        <><ChevronUp className="w-4 h-4" /> Show Less</>
+                      ) : (
+                        <><ChevronDown className="w-4 h-4" /> Show {files.length - 5} More Records</>
+                      )}
                     </button>
                   </div>
                 )}
               </div>
             )}
-          </div>
+          </Card>
         </div>
 
         {/* Active Grants */}
         <div className="lg:col-span-1">
-          <div className="glass-card overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <Card hoverable={false} className="overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b-2 border-black">
               <div className="flex items-center gap-3">
-                <div className="icon-box icon-box-emerald">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
+                <div className="w-10 h-10 rounded-lg bg-[#10B981] border-2 border-black flex items-center justify-center">
+                  <Share2 className="w-5 h-5 text-white" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">Active Grants</h2>
-                  <p className="text-sm text-gray-500">Hospital & patient shares</p>
+                  <p className="text-sm text-gray-500 font-medium">Hospital & patient shares</p>
                 </div>
               </div>
             </div>
@@ -607,17 +590,17 @@ export default function DashboardPage() {
             {isLoadingGrants ? (
               <div className="flex items-center justify-center h-32">
                 <div className="relative">
-                  <div className="w-8 h-8 border-3 border-emerald-100 rounded-full"></div>
-                  <div className="absolute top-0 left-0 w-8 h-8 border-3 border-transparent border-t-emerald-500 rounded-full animate-spin"></div>
+                  <div className="w-10 h-10 border-3 border-gray-200 rounded-full"></div>
+                  <div className="absolute top-0 left-0 w-10 h-10 border-3 border-transparent border-t-[#10B981] rounded-full animate-spin"></div>
                 </div>
               </div>
             ) : combinedGrants.length === 0 ? (
               <div className="text-center py-8 px-6">
-                <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
-                  <span className="text-2xl">🔗</span>
+                <div className="w-16 h-16 rounded-2xl bg-[#ECFDF5] border-[3px] border-[#10B981] flex items-center justify-center mx-auto mb-3">
+                  <Share2 className="w-8 h-8 text-[#10B981]" />
                 </div>
-                <p className="text-gray-500 text-sm mb-3">No active grants</p>
-                <Link href="/hospital-access" className="text-sm text-emerald-600 hover:text-emerald-700 font-medium">
+                <p className="text-gray-500 text-sm font-medium mb-3">No active grants</p>
+                <Link href="/hospital-access" className="text-sm text-[#10B981] hover:underline font-bold">
                   Share a record →
                 </Link>
               </div>
@@ -626,43 +609,40 @@ export default function DashboardPage() {
                 {combinedGrants.slice(0, 6).map((grant) => (
                   <div key={`${grant.type}-${grant.id}`} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md ${
-                        grant.type === 'hospital' 
-                          ? 'bg-gradient-to-br from-indigo-500 to-purple-500' 
-                          : 'bg-gradient-to-br from-emerald-500 to-teal-500'
-                      }`}>
-                        <span className="text-white font-bold text-sm">
+                      <div className={`w-10 h-10 rounded-full border-2 border-black flex items-center justify-center ${grant.type === 'hospital'
+                          ? 'bg-[#2F81F7]'
+                          : 'bg-[#14B8A6]'
+                        }`}>
+                        <span className="text-white text-sm">
                           {grant.type === 'hospital' ? '🏥' : grant.name?.charAt(0).toUpperCase() || '?'}
                         </span>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 text-sm truncate">{grant.name}</p>
-                        <p className="text-xs text-gray-500">
-                          {grant.type === 'hospital' ? 'Hospital Access' : (
-                            <>Shared with patient {grant.filename && <span className="text-gray-400">• {grant.filename}</span>}</>
-                          )}
+                        <p className="font-bold text-gray-900 text-sm truncate">{grant.name}</p>
+                        <p className="text-xs text-gray-500 font-medium">
+                          {grant.type === 'hospital' ? 'Hospital Access' : 'Patient Share'}
                         </p>
                         {grant.granted_at && (
                           <p className="text-xs text-gray-400">{formatDate(grant.granted_at)}</p>
                         )}
                       </div>
                     </div>
-                    <span className={`badge-${grant.status === 'active' ? 'success' : 'info'} flex-shrink-0`}>>
+                    <Badge variant="success" className="flex-shrink-0">
                       {grant.status}
-                    </span>
+                    </Badge>
                   </div>
                 ))}
-                
+
                 {combinedGrants.length > 6 && (
                   <div className="p-4">
-                    <Link href="/hospital-access" className="text-sm text-gray-500 hover:text-indigo-600 font-medium">
+                    <Link href="/hospital-access" className="text-sm text-gray-500 hover:text-black font-bold">
                       View all grants →
                     </Link>
                   </div>
                 )}
               </div>
             )}
-          </div>
+          </Card>
         </div>
       </div>
 
@@ -675,7 +655,7 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* Hospital Invite Tokens Section - Only for Hospital Users */}
+      {/* Hospital Invite Tokens Section */}
       {isHospital && (
         <div className="mt-8">
           <HospitalInviteTokens />

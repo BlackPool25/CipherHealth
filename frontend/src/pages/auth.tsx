@@ -1,5 +1,5 @@
 /**
- * Unified Authentication Page
+ * Unified Authentication Page - Neo-Brutalist Design
  * 
  * Supports multiple authentication methods:
  * - MetaMask wallet connection + password
@@ -14,8 +14,30 @@ import { useRouter } from 'next/router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWallet } from '@/hooks/useWallet';
 import { registerV2, loginV2, validateInviteToken, generatePublicInvite, getCurrentUser } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  Wallet,
+  KeyRound,
+  User,
+  Building2,
+  Copy,
+  Check,
+  AlertCircle,
+  CheckCircle,
+  Ticket,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  Zap
+} from 'lucide-react';
 
-type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'register' | 'invite';
 type LoginMethod = 'wallet' | 'password';
 type RegisterRole = 'patient' | 'hospital';
 
@@ -30,21 +52,22 @@ interface InviteToken {
 export default function UnifiedAuthPage() {
   const router = useRouter();
   const { login: setAuth, isAuthenticated } = useAuth();
-  const { 
-    address: walletAddress, 
-    connect, 
-    isLoading: isConnecting, 
-    error: walletError, 
-    switchToSepolia, 
-    isMetaMaskInstalled, 
+  const {
+    address: walletAddress,
+    connect,
+    isLoading: isConnecting,
+    error: walletError,
+    switchToSepolia,
+    isMetaMaskInstalled,
     isCorrectNetwork,
     isConnected
   } = useWallet();
-  
+
   const [mode, setMode] = useState<AuthMode>('login');
   const [loginMethod, setLoginMethod] = useState<LoginMethod>('password');
   const [registerRole, setRegisterRole] = useState<RegisterRole>('patient');
-  
+  const [showPassword, setShowPassword] = useState(false);
+
   // Form fields
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -52,20 +75,19 @@ export default function UnifiedAuthPage() {
   const [email, setEmail] = useState('');
   const [inviteToken, setInviteToken] = useState('');
   const [masterSecret, setMasterSecret] = useState('');
-  
+
   // Invite generation
-  const [showInviteGenerator, setShowInviteGenerator] = useState(false);
   const [invitePassword, setInvitePassword] = useState('');
   const [generatedTokens, setGeneratedTokens] = useState<InviteToken[]>([]);
   const [isGeneratingInvite, setIsGeneratingInvite] = useState(false);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
-  
+
   // State
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [inviteValid, setInviteValid] = useState<boolean | null>(null);
-  
+
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
@@ -85,7 +107,7 @@ export default function UnifiedAuthPage() {
         setInviteValid(null);
       }
     };
-    
+
     const debounce = setTimeout(validateToken, 500);
     return () => clearTimeout(debounce);
   }, [inviteToken]);
@@ -93,18 +115,18 @@ export default function UnifiedAuthPage() {
   // Handle MetaMask connect
   const handleConnectWallet = async () => {
     setError(null);
-    
+
     if (!isMetaMaskInstalled) {
       setError('MetaMask is not installed. Please install it from metamask.io');
       return;
     }
-    
+
     const connected = await connect();
     if (!connected) {
       setError(walletError || 'Failed to connect wallet');
       return;
     }
-    
+
     if (!isCorrectNetwork) {
       await switchToSepolia();
     }
@@ -115,18 +137,15 @@ export default function UnifiedAuthPage() {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
-    
+
     const result = await loginV2({ username, password });
-    
+
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
-      // Store token temporarily to fetch full user profile
       localStorage.setItem('jwt_token', result.data.access_token);
-      
-      // Fetch full user profile with UUID
       const userResult = await getCurrentUser();
-      
+
       setAuth(
         {
           id: result.data.user_id,
@@ -139,35 +158,31 @@ export default function UnifiedAuthPage() {
       );
       router.push('/dashboard');
     }
-    
+
     setIsLoading(false);
   };
 
-  // Wallet + Password login (for users who registered with wallet)
+  // Wallet + Password login
   const handleWalletPasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
+
     if (!walletAddress) {
       setError('Please connect your wallet first');
       return;
     }
-    
+
     setIsLoading(true);
-    
-    // Use wallet address as username for wallet users
+
     const walletUsername = `wallet_${walletAddress.slice(2, 10).toLowerCase()}`;
     const result = await loginV2({ username: walletUsername, password });
-    
+
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
-      // Store token temporarily to fetch full user profile
       localStorage.setItem('jwt_token', result.data.access_token);
-      
-      // Fetch full user profile with UUID
       const userResult = await getCurrentUser();
-      
+
       setAuth(
         {
           id: result.data.user_id,
@@ -181,7 +196,7 @@ export default function UnifiedAuthPage() {
       );
       router.push('/dashboard');
     }
-    
+
     setIsLoading(false);
   };
 
@@ -189,61 +204,47 @@ export default function UnifiedAuthPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
-    // Validation
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-    
+
     // Password strength validation
     const passwordErrors: string[] = [];
-    if (password.length < 8) {
-      passwordErrors.push('at least 8 characters');
-    }
-    if (!/[A-Z]/.test(password)) {
-      passwordErrors.push('one uppercase letter');
-    }
-    if (!/[a-z]/.test(password)) {
-      passwordErrors.push('one lowercase letter');
-    }
-    if (!/[0-9]/.test(password)) {
-      passwordErrors.push('one number');
-    }
-    if (!/[!@#$%^&*()_+\-=\[\]{}|;':",./<>?]/.test(password)) {
-      passwordErrors.push('one special character (!@#$%^&*...)');
-    }
-    
+    if (password.length < 8) passwordErrors.push('8+ characters');
+    if (!/[A-Z]/.test(password)) passwordErrors.push('uppercase');
+    if (!/[a-z]/.test(password)) passwordErrors.push('lowercase');
+    if (!/[0-9]/.test(password)) passwordErrors.push('number');
+    if (!/[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?]/.test(password)) passwordErrors.push('symbol');
+
     if (passwordErrors.length > 0) {
-      setError(`Password must contain: ${passwordErrors.join(', ')}`);
+      setError(`Password needs: ${passwordErrors.join(', ')}`);
       return;
     }
-    
-    // Invite token is required for both patient and hospital
+
     if (!inviteToken.trim()) {
       setError('Invite token is required');
       return;
     }
-    
-    // For wallet users, generate username from wallet address
+
     let finalUsername = username;
     if (loginMethod === 'wallet' && walletAddress) {
       finalUsername = `wallet_${walletAddress.slice(2, 10).toLowerCase()}`;
     }
-    
+
     if (!finalUsername) {
       setError('Username is required');
       return;
     }
-    
-    // Hospital requires master secret
+
     if (registerRole === 'hospital' && !masterSecret.trim()) {
       setError('Hospital registration secret is required');
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     const result = await registerV2(
       {
         role: registerRole,
@@ -254,16 +255,13 @@ export default function UnifiedAuthPage() {
       },
       registerRole === 'hospital' ? masterSecret : undefined
     );
-    
+
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
-      // Store token temporarily to fetch full user profile
       localStorage.setItem('jwt_token', result.data.access_token);
-      
-      // Fetch full user profile with UUID
       const userResult = await getCurrentUser();
-      
+
       setAuth(
         {
           id: result.data.user_id,
@@ -277,7 +275,7 @@ export default function UnifiedAuthPage() {
       );
       router.push('/dashboard');
     }
-    
+
     setIsLoading(false);
   };
 
@@ -287,12 +285,12 @@ export default function UnifiedAuthPage() {
       setError('Please enter the admin password');
       return;
     }
-    
+
     setIsGeneratingInvite(true);
     setError(null);
-    
+
     const result = await generatePublicInvite(invitePassword, 3600);
-    
+
     if (result.error) {
       if (result.error.includes('403') || result.error.includes('Invalid')) {
         setError('Invalid admin password');
@@ -300,7 +298,7 @@ export default function UnifiedAuthPage() {
         setError(result.error);
       }
     } else if (result.data) {
-      setSuccessMessage('Invite token generated successfully!');
+      setSuccessMessage('Invite token generated!');
       setGeneratedTokens(prev => [{
         token: result.data!.invite_token,
         created_at: new Date().toISOString(),
@@ -310,7 +308,7 @@ export default function UnifiedAuthPage() {
       }, ...prev]);
       setTimeout(() => setSuccessMessage(null), 3000);
     }
-    
+
     setIsGeneratingInvite(false);
   };
 
@@ -325,526 +323,539 @@ export default function UnifiedAuthPage() {
     }
   };
 
+  // Password strength indicator
+  const getPasswordStrength = () => {
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (/[A-Z]/.test(password)) strength++;
+    if (/[a-z]/.test(password)) strength++;
+    if (/[0-9]/.test(password)) strength++;
+    if (/[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?]/.test(password)) strength++;
+    return strength;
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-[#F5F5F5] flex items-center justify-center px-4 py-8">
       <div className="max-w-md w-full">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-1 shadow-xl shadow-indigo-500/30">
-              <div className="w-full h-full rounded-xl bg-white flex items-center justify-center">
-                <span className="text-2xl">🏥</span>
-              </div>
+            <div className="w-16 h-16 rounded-2xl bg-[#14B8A6] border-[4px] border-black flex items-center justify-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] animate-float">
+              <span className="text-3xl">🏥</span>
             </div>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 text-transparent bg-clip-text">
-            CipherHealth
+          <h1 className="text-4xl font-bold">
+            <span className="highlight-teal">Cipher</span>Health
           </h1>
-          <p className="text-gray-600 mt-1">Secure Health Records</p>
+          <p className="text-gray-600 mt-2 font-medium">Secure Health Records</p>
         </div>
 
         {/* Auth Card */}
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          {/* Mode Toggle */}
-          <div className="flex rounded-xl bg-gray-100 p-1 mb-6">
+        <Card hoverable={false} className="p-0 overflow-hidden">
+          {/* Tab Navigation */}
+          <div className="flex border-b-[3px] border-black">
             <button
-              onClick={() => { setMode('login'); setShowInviteGenerator(false); }}
-              className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${
-                mode === 'login' && !showInviteGenerator
-                  ? 'bg-white text-indigo-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
+              onClick={() => { setMode('login'); setError(null); }}
+              className={`flex-1 py-4 text-base font-bold transition-colors ${mode === 'login'
+                  ? 'bg-black text-white'
+                  : 'bg-white text-black hover:bg-gray-100'
+                }`}
             >
               Login
             </button>
             <button
-              onClick={() => { setMode('register'); setShowInviteGenerator(false); }}
-              className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${
-                mode === 'register' && !showInviteGenerator
-                  ? 'bg-white text-indigo-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
+              onClick={() => { setMode('register'); setError(null); }}
+              className={`flex-1 py-4 text-base font-bold transition-colors border-l-[3px] border-r-[3px] border-black ${mode === 'register'
+                  ? 'bg-black text-white'
+                  : 'bg-white text-black hover:bg-gray-100'
+                }`}
             >
               Register
             </button>
             <button
-              onClick={() => setShowInviteGenerator(true)}
-              className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${
-                showInviteGenerator
-                  ? 'bg-white text-indigo-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
+              onClick={() => { setMode('invite'); setError(null); }}
+              className={`flex-1 py-4 text-base font-bold transition-colors ${mode === 'invite'
+                  ? 'bg-black text-white'
+                  : 'bg-white text-black hover:bg-gray-100'
+                }`}
             >
               Get Invite
             </button>
           </div>
 
-          {/* Error Message */}
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-              {error}
-            </div>
-          )}
+          <CardContent className="p-6">
+            {/* Error Message */}
+            {error && (
+              <div className="mb-4 p-3 bg-[#FEF2F2] border-2 border-[#EF4444] rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-[#DC2626]" />
+                <span className="text-sm font-medium text-[#DC2626]">{error}</span>
+              </div>
+            )}
 
-          {/* Success Message */}
-          {successMessage && (
-            <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
-              {successMessage}
-            </div>
-          )}
+            {/* Success Message */}
+            {successMessage && (
+              <div className="mb-4 p-3 bg-[#ECFDF5] border-2 border-[#10B981] rounded-xl flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-[#059669]" />
+                <span className="text-sm font-medium text-[#059669]">{successMessage}</span>
+              </div>
+            )}
 
-          {showInviteGenerator ? (
-            /* ===================== INVITE GENERATOR ===================== */
-            <div className="space-y-4">
-              <div className="text-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-800">Generate Patient Invite</h3>
-                <p className="text-sm text-gray-600 mt-1">
-                  Enter the admin password to generate invite tokens
+            {/* =================== INVITE GENERATOR =================== */}
+            {mode === 'invite' && (
+              <div className="space-y-4">
+                <div className="text-center mb-6">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-[#FFC224] border-[3px] border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <Ticket className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-xl font-bold">Generate Patient Invite</h3>
+                  <p className="text-sm text-gray-600 mt-1 font-medium">
+                    Enter admin password to generate tokens
+                  </p>
+                </div>
+
+                <div>
+                  <Label htmlFor="invite-password">Admin Password</Label>
+                  <Input
+                    id="invite-password"
+                    type="password"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    className="mt-2"
+                    placeholder="Enter admin password"
+                    autoComplete="off"
+                  />
+                </div>
+
+                <Button
+                  onClick={handleGenerateInvite}
+                  disabled={isGeneratingInvite || !invitePassword.trim()}
+                  variant="yellow"
+                  className="w-full"
+                >
+                  <Ticket className="w-5 h-5" />
+                  {isGeneratingInvite ? 'Generating...' : 'Generate Token'}
+                </Button>
+
+                {/* Generated Tokens List */}
+                {generatedTokens.length > 0 && (
+                  <div className="mt-6">
+                    <Label>Generated Tokens</Label>
+                    <div className="space-y-2 mt-2 max-h-60 overflow-y-auto">
+                      {generatedTokens.map((t, idx) => (
+                        <div
+                          key={`${t.token}-${idx}`}
+                          className={`p-3 rounded-xl border-2 ${t.used || t.expired
+                              ? 'bg-gray-50 border-gray-300'
+                              : 'bg-[#ECFDF5] border-[#10B981]'
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <code className="text-xs font-mono text-gray-700 truncate flex-1 mr-2">
+                              {t.token.substring(0, 24)}...
+                            </code>
+                            {!t.used && !t.expired ? (
+                              <Button
+                                onClick={() => handleCopyToken(t.token)}
+                                size="sm"
+                                variant={copiedToken === t.token ? 'green' : 'outline'}
+                              >
+                                {copiedToken === t.token ? (
+                                  <><Check className="w-4 h-4" /> Copied</>
+                                ) : (
+                                  <><Copy className="w-4 h-4" /> Copy</>
+                                )}
+                              </Button>
+                            ) : (
+                              <Badge variant={t.used ? 'secondary' : 'warning'}>
+                                {t.used ? 'Used' : 'Expired'}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-500 text-center mt-4 font-medium">
+                  Each token can only be used once
                 </p>
               </div>
+            )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Admin Password
-                </label>
-                <input
-                  type="password"
-                  value={invitePassword}
-                  onChange={(e) => setInvitePassword(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="Enter admin password"
-                  autoComplete="off"
-                />
-              </div>
+            {/* =================== LOGIN FORM =================== */}
+            {mode === 'login' && (
+              <div className="space-y-4">
+                {/* Login Method Toggle */}
+                <div className="flex gap-2 mb-6">
+                  <button
+                    type="button"
+                    onClick={() => setLoginMethod('password')}
+                    className={`flex-1 py-3 px-4 text-sm font-bold rounded-xl border-[3px] border-black transition-all flex items-center justify-center gap-2 ${loginMethod === 'password'
+                        ? 'bg-black text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)]'
+                        : 'bg-white text-black hover:bg-gray-50'
+                      }`}
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    Username
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMethod('wallet')}
+                    className={`flex-1 py-3 px-4 text-sm font-bold rounded-xl border-[3px] border-black transition-all flex items-center justify-center gap-2 ${loginMethod === 'wallet'
+                        ? 'bg-black text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)]'
+                        : 'bg-white text-black hover:bg-gray-50'
+                      }`}
+                  >
+                    <Wallet className="w-4 h-4" />
+                    Wallet
+                  </button>
+                </div>
 
-              <button
-                onClick={handleGenerateInvite}
-                disabled={isGeneratingInvite || !invitePassword.trim()}
-                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-lg hover:from-emerald-600 hover:to-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isGeneratingInvite ? 'Generating...' : '🎟️ Generate Invite Token'}
-              </button>
+                {loginMethod === 'password' ? (
+                  /* Username + Password Login */
+                  <form onSubmit={handlePasswordLogin} className="space-y-4">
+                    <div>
+                      <Label htmlFor="username">Username</Label>
+                      <Input
+                        id="username"
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        required
+                        className="mt-2"
+                        placeholder="Enter your username"
+                      />
+                    </div>
 
-              {/* Generated Tokens List */}
-              {generatedTokens.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Generated Tokens</h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {generatedTokens.map((t, idx) => (
-                      <div
-                        key={`${t.token}-${idx}`}
-                        className={`p-3 rounded-lg border ${
-                          t.used || t.expired
-                            ? 'bg-gray-50 border-gray-200'
-                            : 'bg-green-50 border-green-200'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <code className="text-xs font-mono text-gray-600 truncate flex-1 mr-2">
-                            {t.token.substring(0, 24)}...
-                          </code>
-                          {!t.used && !t.expired ? (
-                            <button
-                              onClick={() => handleCopyToken(t.token)}
-                              className={`px-3 py-1 text-xs rounded ${
-                                copiedToken === t.token
-                                  ? 'bg-green-500 text-white'
-                                  : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                              }`}
-                            >
-                              {copiedToken === t.token ? '✓ Copied' : 'Copy'}
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-500">
-                              {t.used ? 'Used' : 'Expired'}
+                    <div>
+                      <Label htmlFor="password">Password</Label>
+                      <div className="relative mt-2">
+                        <Input
+                          id="password"
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          required
+                          placeholder="Enter your password"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1"
+                        >
+                          {showPassword ? <EyeOff className="w-5 h-5 text-gray-500" /> : <Eye className="w-5 h-5 text-gray-500" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <Button type="submit" disabled={isLoading} className="w-full" variant="teal">
+                      <Lock className="w-5 h-5" />
+                      {isLoading ? 'Signing in...' : 'Sign In'}
+                    </Button>
+                  </form>
+                ) : (
+                  /* Wallet + Password Login */
+                  <div className="space-y-4">
+                    {!isConnected ? (
+                      <div className="text-center py-6">
+                        <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#FF6B7A] border-[3px] border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                          <span className="text-4xl">🦊</span>
+                        </div>
+                        <p className="text-gray-600 font-medium mb-4">
+                          {isMetaMaskInstalled
+                            ? 'Connect your wallet to login'
+                            : 'Please install MetaMask'}
+                        </p>
+
+                        {!isMetaMaskInstalled && (
+                          <a
+                            href="https://metamask.io/download/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block mb-4 text-[#2F81F7] font-bold hover:underline"
+                          >
+                            Download MetaMask →
+                          </a>
+                        )}
+
+                        <Button
+                          type="button"
+                          onClick={handleConnectWallet}
+                          disabled={isConnecting || !isMetaMaskInstalled}
+                          variant="coral"
+                          className="w-full"
+                        >
+                          <Wallet className="w-5 h-5" />
+                          {isConnecting ? 'Connecting...' : 'Connect MetaMask'}
+                        </Button>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleWalletPasswordLogin} className="space-y-4">
+                        <div className="p-4 bg-[#ECFDF5] border-2 border-[#10B981] rounded-xl">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle className="w-5 h-5 text-[#059669]" />
+                            <span className="text-sm font-bold text-[#059669]">
+                              Connected: {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
                             </span>
+                          </div>
+                          {!isCorrectNetwork && (
+                            <button
+                              type="button"
+                              onClick={switchToSepolia}
+                              className="mt-2 text-sm font-bold text-[#D97706] hover:underline flex items-center gap-1"
+                            >
+                              ⚠️ Switch to Sepolia Network
+                            </button>
                           )}
                         </div>
-                      </div>
-                    ))}
+
+                        <div>
+                          <Label htmlFor="wallet-password">Password</Label>
+                          <Input
+                            id="wallet-password"
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                            className="mt-2"
+                            placeholder="Enter your password"
+                          />
+                        </div>
+
+                        <Button type="submit" disabled={isLoading} className="w-full" variant="teal">
+                          <Zap className="w-5 h-5" />
+                          {isLoading ? 'Signing in...' : 'Sign In with Wallet'}
+                        </Button>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* =================== REGISTER FORM =================== */}
+            {mode === 'register' && (
+              <form onSubmit={handleRegister} className="space-y-4">
+                {/* Role Toggle */}
+                <div>
+                  <Label>I am a</Label>
+                  <div className="flex gap-3 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setRegisterRole('patient')}
+                      className={`flex-1 py-4 px-4 rounded-xl border-[3px] border-black font-bold transition-all flex items-center justify-center gap-2 ${registerRole === 'patient'
+                          ? 'bg-[#14B8A6] text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
+                          : 'bg-white text-black hover:bg-gray-50'
+                        }`}
+                    >
+                      <User className="w-5 h-5" />
+                      Patient
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegisterRole('hospital')}
+                      className={`flex-1 py-4 px-4 rounded-xl border-[3px] border-black font-bold transition-all flex items-center justify-center gap-2 ${registerRole === 'hospital'
+                          ? 'bg-[#2F81F7] text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
+                          : 'bg-white text-black hover:bg-gray-50'
+                        }`}
+                    >
+                      <Building2 className="w-5 h-5" />
+                      Hospital
+                    </button>
                   </div>
                 </div>
-              )}
 
-              <p className="text-xs text-gray-500 text-center mt-4">
-                Each token can only be used once. Share it with a patient to allow them to register.
-              </p>
-            </div>
-          ) : mode === 'login' ? (
-            /* ===================== LOGIN FORM ===================== */
-            <div className="space-y-4">
-              {/* Login Method Toggle */}
-              <div className="flex gap-2 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('password')}
-                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border-2 transition-all ${
-                    loginMethod === 'password'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  🔑 Username
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('wallet')}
-                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border-2 transition-all ${
-                    loginMethod === 'wallet'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  🦊 Wallet
-                </button>
-              </div>
+                {/* Registration Method Toggle */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLoginMethod('password')}
+                    className={`flex-1 py-2.5 px-3 text-sm font-bold rounded-lg border-2 border-black transition-all flex items-center justify-center gap-2 ${loginMethod === 'password'
+                        ? 'bg-black text-white'
+                        : 'bg-white text-black hover:bg-gray-50'
+                      }`}
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    Username
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMethod('wallet')}
+                    className={`flex-1 py-2.5 px-3 text-sm font-bold rounded-lg border-2 border-black transition-all flex items-center justify-center gap-2 ${loginMethod === 'wallet'
+                        ? 'bg-black text-white'
+                        : 'bg-white text-black hover:bg-gray-50'
+                      }`}
+                  >
+                    <Wallet className="w-4 h-4" />
+                    Wallet
+                  </button>
+                </div>
 
-              {loginMethod === 'password' ? (
-                /* Username + Password Login */
-                <form onSubmit={handlePasswordLogin} className="space-y-4">
+                {loginMethod === 'wallet' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Username
-                    </label>
-                    <input
+                    {!isConnected ? (
+                      <Button
+                        type="button"
+                        onClick={handleConnectWallet}
+                        disabled={isConnecting || !isMetaMaskInstalled}
+                        variant="coral"
+                        className="w-full"
+                      >
+                        <Wallet className="w-5 h-5" />
+                        {isConnecting ? 'Connecting...' : 'Connect MetaMask'}
+                      </Button>
+                    ) : (
+                      <div className="p-3 bg-[#ECFDF5] border-2 border-[#10B981] rounded-xl flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5 text-[#059669]" />
+                        <span className="text-sm font-bold text-[#059669]">
+                          {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {loginMethod === 'password' && (
+                  <div>
+                    <Label htmlFor="reg-username">Username</Label>
+                    <Input
+                      id="reg-username"
                       type="text"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      placeholder="Enter your username"
+                      className="mt-2"
+                      placeholder="Choose a username"
                     />
                   </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      placeholder="Enter your password"
-                    />
-                  </div>
+                )}
 
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isLoading ? 'Signing in...' : 'Sign In'}
-                  </button>
-                </form>
-              ) : (
-                /* Wallet + Password Login */
-                <div className="space-y-4">
-                  {!isConnected ? (
-                    /* Connect Wallet First */
-                    <div className="text-center py-4">
-                      <div className="text-4xl mb-3">🦊</div>
-                      <p className="text-sm text-gray-600 mb-4">
-                        {isMetaMaskInstalled 
-                          ? 'Connect your wallet to login'
-                          : 'Please install MetaMask to use wallet login'}
-                      </p>
-                      
-                      {!isMetaMaskInstalled && (
-                        <a
-                          href="https://metamask.io/download/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block mb-4 text-indigo-600 hover:underline text-sm"
-                        >
-                          Download MetaMask →
-                        </a>
-                      )}
-                      
-                      <button
-                        type="button"
-                        onClick={handleConnectWallet}
-                        disabled={isConnecting || !isMetaMaskInstalled}
-                        className="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-600 text-white font-semibold rounded-lg hover:from-orange-600 hover:to-amber-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isConnecting ? 'Connecting...' : '🦊 Connect MetaMask'}
-                      </button>
-                    </div>
-                  ) : (
-                    /* Wallet Connected - Enter Password */
-                    <form onSubmit={handleWalletPasswordLogin} className="space-y-4">
-                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-center">
-                        <p className="text-sm text-green-700">
-                          ✓ Wallet Connected: {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
-                        </p>
-                        {!isCorrectNetwork && (
-                          <button
-                            type="button"
-                            onClick={switchToSepolia}
-                            className="mt-2 text-xs text-amber-600 hover:underline"
-                          >
-                            ⚠️ Switch to Sepolia Network
-                          </button>
-                        )}
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Password
-                        </label>
-                        <input
-                          type="password"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          required
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                          placeholder="Enter your password"
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={isLoading}
-                        className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isLoading ? 'Signing in...' : 'Sign In with Wallet'}
-                      </button>
-                      
-                      <p className="text-xs text-gray-500 text-center">
-                        Don't have an account?{' '}
-                        <button
-                          type="button"
-                          onClick={() => setMode('register')}
-                          className="text-indigo-600 hover:underline"
-                        >
-                          Register
-                        </button>
-                      </p>
-                    </form>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            /* ===================== REGISTER FORM ===================== */
-            <form onSubmit={handleRegister} className="space-y-4">
-              {/* Role Toggle */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  I am a
-                </label>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setRegisterRole('patient')}
-                    className={`flex-1 py-3 px-4 rounded-xl border-2 font-medium transition-all flex items-center justify-center gap-2 ${
-                      registerRole === 'patient'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}
-                  >
-                    <span className="text-xl">🧑</span>
-                    <span>Patient</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegisterRole('hospital')}
-                    className={`flex-1 py-3 px-4 rounded-xl border-2 font-medium transition-all flex items-center justify-center gap-2 ${
-                      registerRole === 'hospital'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}
-                  >
-                    <span className="text-xl">🏥</span>
-                    <span>Hospital</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Registration Method Toggle */}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('password')}
-                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border-2 transition-all ${
-                    loginMethod === 'password'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  🔑 Username
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('wallet')}
-                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg border-2 transition-all ${
-                    loginMethod === 'wallet'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  🦊 Wallet
-                </button>
-              </div>
-
-              {loginMethod === 'wallet' && (
-                /* Wallet connection for registration */
                 <div>
-                  {!isConnected ? (
-                    <button
-                      type="button"
-                      onClick={handleConnectWallet}
-                      disabled={isConnecting || !isMetaMaskInstalled}
-                      className="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-600 text-white font-semibold rounded-lg hover:from-orange-600 hover:to-amber-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isConnecting ? 'Connecting...' : '🦊 Connect MetaMask'}
-                    </button>
-                  ) : (
-                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-center">
-                      <p className="text-sm text-green-700">
-                        ✓ Wallet: {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {loginMethod === 'password' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    placeholder="Choose a username"
+                  <Label htmlFor="email">Email (optional)</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="mt-2"
+                    placeholder="your@email.com"
                   />
                 </div>
-              )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email (optional)
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="your@email.com"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Password <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="Strong password required"
-                />
-                <div className="mt-1 text-xs text-gray-500">
-                  <p>Password must contain:</p>
-                  <ul className="list-disc list-inside ml-2 space-y-0.5">
-                    <li className={password.length >= 8 ? 'text-green-600' : ''}>At least 8 characters</li>
-                    <li className={/[A-Z]/.test(password) ? 'text-green-600' : ''}>One uppercase letter</li>
-                    <li className={/[a-z]/.test(password) ? 'text-green-600' : ''}>One lowercase letter</li>
-                    <li className={/[0-9]/.test(password) ? 'text-green-600' : ''}>One number</li>
-                    <li className={/[!@#$%^&*()_+\-=\[\]{}|;':",./<>?]/.test(password) ? 'text-green-600' : ''}>One special character</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="Confirm your password"
-                />
-              </div>
-
-              {/* Invite Token - Required for BOTH patient and hospital */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Invite Token <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={inviteToken}
-                    onChange={(e) => setInviteToken(e.target.value)}
-                    required
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
-                      inviteValid === true
-                        ? 'border-green-300 bg-green-50'
-                        : inviteValid === false
-                        ? 'border-red-300 bg-red-50'
-                        : 'border-gray-300'
-                    }`}
-                    placeholder="Paste invite token (required)"
-                  />
-                  {inviteValid !== null && (
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2">
-                      {inviteValid ? '✅' : '❌'}
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 text-xs text-gray-500">
-                  Get an invite token from the "Get Invite" tab.
-                </p>
-              </div>
-
-              {/* Hospital-specific: Master Secret */}
-              {registerRole === 'hospital' && (
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                  <label className="block text-sm font-medium text-amber-800 mb-1">
-                    🔐 Hospital Registration Secret
-                  </label>
-                  <input
+                <div>
+                  <Label htmlFor="reg-password">Password *</Label>
+                  <Input
+                    id="reg-password"
                     type="password"
-                    value={masterSecret}
-                    onChange={(e) => setMasterSecret(e.target.value)}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="w-full px-4 py-2.5 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
-                    placeholder="Enter the master secret"
+                    minLength={8}
+                    className="mt-2"
+                    placeholder="Strong password required"
                   />
-                  <p className="mt-1 text-xs text-amber-700">
-                    Contact the system administrator to obtain this secret.
+                  {/* Password Strength Indicator */}
+                  <div className="mt-2 flex gap-1">
+                    {[1, 2, 3, 4, 5].map((level) => (
+                      <div
+                        key={level}
+                        className={`h-2 flex-1 rounded-full border border-black ${getPasswordStrength() >= level
+                            ? level <= 2 ? 'bg-[#EF4444]' : level <= 4 ? 'bg-[#FFC224]' : 'bg-[#10B981]'
+                            : 'bg-gray-200'
+                          }`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1 font-medium">
+                    8+ chars, upper, lower, number, symbol
                   </p>
                 </div>
-              )}
 
-              <button
-                type="submit"
-                disabled={isLoading || (loginMethod === 'wallet' && !isConnected)}
-                className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Creating account...' : 'Create Account'}
-              </button>
-            </form>
-          )}
-        </div>
+                <div>
+                  <Label htmlFor="confirm-password">Confirm Password</Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    className="mt-2"
+                    placeholder="Confirm your password"
+                    success={confirmPassword.length > 0 && password === confirmPassword}
+                    error={confirmPassword.length > 0 && password !== confirmPassword}
+                  />
+                </div>
+
+                {/* Invite Token */}
+                <div>
+                  <Label htmlFor="invite-token">Invite Token *</Label>
+                  <div className="relative mt-2">
+                    <Input
+                      id="invite-token"
+                      type="text"
+                      value={inviteToken}
+                      onChange={(e) => setInviteToken(e.target.value)}
+                      required
+                      placeholder="Paste invite token"
+                      success={inviteValid === true}
+                      error={inviteValid === false}
+                    />
+                    {inviteValid !== null && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                        {inviteValid ? (
+                          <CheckCircle className="w-5 h-5 text-[#10B981]" />
+                        ) : (
+                          <AlertCircle className="w-5 h-5 text-[#EF4444]" />
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500 font-medium">
+                    Get one from the "Get Invite" tab
+                  </p>
+                </div>
+
+                {/* Hospital-specific: Master Secret */}
+                {registerRole === 'hospital' && (
+                  <div className="p-4 bg-[#FFFBEB] border-2 border-[#F59E0B] rounded-xl">
+                    <Label htmlFor="master-secret" className="text-[#B45309]">
+                      🔐 Hospital Registration Secret
+                    </Label>
+                    <Input
+                      id="master-secret"
+                      type="password"
+                      value={masterSecret}
+                      onChange={(e) => setMasterSecret(e.target.value)}
+                      required
+                      className="mt-2"
+                      placeholder="Enter the master secret"
+                    />
+                    <p className="mt-1 text-xs text-[#B45309] font-medium">
+                      Contact system administrator
+                    </p>
+                  </div>
+                )}
+
+                <Button
+                  type="submit"
+                  disabled={isLoading || (loginMethod === 'wallet' && !isConnected)}
+                  variant={registerRole === 'patient' ? 'teal' : 'blue'}
+                  className="w-full"
+                >
+                  {isLoading ? 'Creating account...' : 'Create Account'}
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Footer */}
-        <div className="mt-6 text-center text-sm text-gray-500">
-          <span className="inline-flex items-center gap-2">
-            🔒 End-to-End Encrypted
-          </span>
+        <div className="mt-6 text-center">
+          <Badge variant="outline" className="py-2 px-4">
+            <Lock className="w-4 h-4 mr-2" />
+            End-to-End Encrypted
+          </Badge>
         </div>
       </div>
     </div>

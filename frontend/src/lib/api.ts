@@ -1,0 +1,1484 @@
+/**
+ * CipherHealth API Client
+ * 
+ * Comprehensive API client for interacting with the backend.
+ * All endpoints match the FastAPI backend routes.
+ */
+
+import { API_BASE_URL } from './constants';
+
+// =============================================================================
+// HTTP Client Utilities
+// =============================================================================
+
+/**
+ * Get the stored JWT token from localStorage
+ */
+function getAuthToken(): string | null {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('auth_token');
+}
+
+/**
+ * Set the JWT token in localStorage
+ */
+export function setAuthToken(token: string): void {
+    if (typeof window !== 'undefined') {
+        localStorage.setItem('auth_token', token);
+    }
+}
+
+/**
+ * Clear the JWT token from localStorage
+ */
+export function clearAuthToken(): void {
+    if (typeof window !== 'undefined') {
+        localStorage.removeItem('auth_token');
+    }
+}
+
+/**
+ * Make an authenticated API request
+ */
+async function apiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {}
+): Promise<T> {
+    const token = getAuthToken();
+
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+    };
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * Make a multipart form data request (for file uploads)
+ */
+async function apiFormRequest<T>(
+    endpoint: string,
+    formData: FormData
+): Promise<T> {
+    const token = getAuthToken();
+
+    const headers: HeadersInit = {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+}
+
+// =============================================================================
+// Type Definitions
+// =============================================================================
+
+// --- User Types ---
+
+export type UserRole = 'patient' | 'hospital';
+
+export interface User {
+    id: number;
+    uuid: string;
+    username: string;
+    email?: string;
+    role: UserRole;
+    public_key?: string;
+    created_at?: string;
+}
+
+export interface PatientProfile {
+    id: number;
+    user_id: number;
+    name: string;
+    dob?: string;
+    aadhar_masked?: string;
+    blood_group?: string;
+    emergency_contact?: string;
+    public_key: string;
+    profile_cid?: string;
+    created_at?: string;
+}
+
+export interface HospitalProfile {
+    id: number;
+    user_id: number;
+    name: string;
+    registration_id_masked?: string;
+    address?: string;
+    contact_email?: string;
+    contact_phone?: string;
+    public_key: string;
+    created_at?: string;
+}
+
+// --- File/Record Types ---
+
+export interface FileRecord {
+    id: number;
+    cid: string;
+    filename: string;
+    display_name?: string;
+    category?: string;
+    description?: string;
+    capsule: string;
+    encrypted_cek: string;
+    tx_hash?: string;
+    created_at: string;
+}
+
+export interface RecordsListResponse {
+    records: FileRecord[];
+    count: number;
+}
+
+// --- Access Types ---
+
+export interface AccessRequest {
+    id: number;
+    cid: string;
+    requester_pubkey: string;
+    purpose: string;
+    status: 'pending' | 'approved' | 'denied' | 'expired';
+    expires_at?: string;
+    tx_hash?: string;
+    created_at: string;
+}
+
+export interface Grant {
+    id: number;
+    granter_id: number;
+    grantee_id: number;
+    file_id: number;
+    status: 'active' | 'revoked' | 'expired';
+    expires_at?: string;
+    tx_hash?: string;
+    created_at: string;
+}
+
+export interface ApprovedGrant {
+    id: number;
+    cid: string;
+    requester_pubkey: string;
+    purpose: string;
+    status: string;
+    expires_at?: string;
+    tx_hash?: string;
+    created_at: string;
+    time_remaining?: string;
+    is_expired: boolean;
+}
+
+// --- Hospital-Patient Types ---
+
+export interface HospitalPatient {
+    id: number;
+    patient_id: number;
+    hospital_id: number;
+    name: string;
+    public_key: string;
+    has_active_grant: boolean;
+    last_access?: string;
+    files_count: number;
+}
+
+export interface PendingHospitalRequest {
+    id: number;
+    patient_id: number;
+    patient_name: string;
+    hospital_id: number;
+    status: 'pending' | 'approved' | 'denied';
+    requested_at: string;
+}
+
+export interface HospitalAccess {
+    id: number;
+    hospital_id: number;
+    hospital_name: string;
+    has_access: boolean;
+    granted_at?: string;
+    expires_at?: string;
+}
+
+export interface HospitalInfo {
+    id: number;
+    uuid: string;
+    name: string;
+    public_key: string;
+}
+
+// --- Redeem Types ---
+
+export interface RedeemAccessResponse {
+    reenc_capsule: string; // Base64-encoded cfrag
+    cid: string;
+    blob_url: string;
+    capsule: string;
+    encrypted_cek: string;
+    owner_pubkey: string;
+    filename: string;
+}
+
+// --- Audit Types ---
+
+export interface AuditLogEntry {
+    id: number;
+    event_type: 'upload' | 'grant' | 'access' | 'revoke' | 'rotation';
+    actor_id: number;
+    actor_name?: string;
+    actor_role?: string;
+    target_id?: number;
+    target_name?: string;
+    patient_id?: number;
+    file_id?: number;
+    cid?: string;
+    filename?: string;
+    details?: string;
+    tx_hash?: string;
+    block_number?: number;
+    created_at: string;
+}
+
+// =============================================================================
+// Authentication API
+// =============================================================================
+
+export interface RegisterRequest {
+    username: string;
+    password: string;
+    email?: string;
+    role: UserRole;
+    invite_token?: string;
+}
+
+export interface RegisterResponse {
+    user_id: number;
+    uuid: string;
+    role: UserRole;
+    token: string;
+    needs_profile_upload?: boolean;
+}
+
+export interface LoginResponse {
+    access_token: string;
+    token_type: string;
+    user_id: number;
+    uuid: string;
+    role: UserRole;
+    username: string;
+}
+
+/**
+ * Register a new user (patient or hospital)
+ */
+export async function registerUser(data: RegisterRequest): Promise<RegisterResponse> {
+    return apiRequest('/auth/register-v2', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+/**
+ * Login and get JWT token
+ */
+export async function loginUser(username: string, password: string): Promise<LoginResponse> {
+    const response = await apiRequest<LoginResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+    });
+
+    // Store the token
+    setAuthToken(response.access_token);
+
+    return response;
+}
+
+/**
+ * Logout (clear stored token)
+ */
+export function logout(): void {
+    clearAuthToken();
+}
+
+/**
+ * Get current authenticated user's profile
+ */
+export async function getUserProfile(): Promise<User> {
+    return apiRequest('/auth/me');
+}
+
+/**
+ * Update user profile (including public key)
+ */
+export async function updateUserProfile(data: {
+    public_key?: string;
+    email?: string;
+}): Promise<{ message: string }> {
+    return apiRequest('/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+/**
+ * Verify user's password (for sensitive operations)
+ */
+export async function verifyPassword(password: string): Promise<{ valid: boolean }> {
+    return apiRequest('/auth/verify-password', {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+    });
+}
+
+/**
+ * Create an invite code (hospital only)
+ */
+export async function createInviteCode(): Promise<{ invite_code: string; expires_at: string }> {
+    return apiRequest('/auth/create-invite', { method: 'POST' });
+}
+
+// =============================================================================
+// Patient Profile API
+// =============================================================================
+
+export interface CreatePatientProfileRequest {
+    name: string;
+    dob?: string;
+    aadhar?: string;
+    blood_group?: string;
+    emergency_contact?: string;
+    public_key: string;
+}
+
+/**
+ * Create or update patient base profile
+ */
+export async function createPatientProfile(
+    data: CreatePatientProfileRequest
+): Promise<{ patient_id: number; public_key: string }> {
+    return apiRequest('/patients/create-base-profile', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+/**
+ * Create patient profile with encrypted data stored on IPFS
+ */
+export async function createPatientProfileWithCid(data: {
+    name: string;
+    public_key: string;
+    profile_cid: string;
+    capsule: string;
+    encrypted_cek: string;
+}): Promise<{ patient_id: number; profile_cid: string }> {
+    return apiRequest('/patients/create-base-profile-with-cid', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+/**
+ * Get patient profile by ID
+ */
+export async function getPatientProfile(patientId: number): Promise<PatientProfile> {
+    return apiRequest(`/patients/profile/${patientId}`);
+}
+
+/**
+ * Update patient profile
+ */
+export async function updatePatientProfile(
+    patientId: number,
+    data: Partial<CreatePatientProfileRequest>
+): Promise<{ message: string }> {
+    return apiRequest(`/patients/profile/${patientId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+// =============================================================================
+// File Upload API
+// =============================================================================
+
+export interface UploadResponse {
+    cid: string;
+    file_id: number;
+    tx_hash?: string;
+    etherscan_url?: string;
+}
+
+/**
+ * Upload and encrypt a file
+ */
+export async function uploadFile(
+    file: File,
+    patientId: number,
+    ownerPublicKey?: string
+): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patient_id', patientId.toString());
+    if (ownerPublicKey) {
+        formData.append('owner_public_key', ownerPublicKey);
+    }
+
+    return apiFormRequest('/upload/upload', formData);
+}
+
+/**
+ * Hospital uploads a file for a patient
+ */
+export async function hospitalUploadFile(
+    file: File,
+    patientId: number,
+    category?: string,
+    description?: string
+): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patient_id', patientId.toString());
+    if (category) formData.append('category', category);
+    if (description) formData.append('description', description);
+
+    return apiFormRequest('/upload/hospital-upload', formData);
+}
+
+// =============================================================================
+// Records API
+// =============================================================================
+
+/**
+ * Get patient's records (files)
+ */
+export async function getPatientRecords(patientId: number): Promise<RecordsListResponse> {
+    return apiRequest(`/access/records/${patientId}`);
+}
+
+export interface DecryptedFileResponse {
+    data?: {
+        filename: string;
+        content_base64: string;
+        content_type: string;
+        size: number;
+    };
+    error?: string;
+}
+
+/**
+ * Download and decrypt file by fileId (server-side decryption for patient files)
+ */
+export async function downloadFile(
+    fileId: number,
+    privateKeyHex: string,
+    grantId?: number
+): Promise<DecryptedFileResponse> {
+    try {
+        const response = await apiRequest<{
+            filename: string;
+            content_base64: string;
+            content_type: string;
+            size: number;
+        }>("/upload/decrypt-file", {
+            method: "POST",
+            body: JSON.stringify({
+                file_id: fileId,
+                private_key_hex: privateKeyHex,
+                grant_id: grantId,
+            }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : "Download failed" };
+    }
+}
+
+/**
+ * Download encrypted file as raw blob by CID
+ */
+export async function downloadFileBlob(cid: string): Promise<Blob> {
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE_URL}/upload/download/${cid}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    if (!response.ok) {
+        throw new Error("Failed to download file");
+    }
+
+    return response.blob();
+}
+
+/**
+ * Download raw encrypted bytes (for re-encryption flow)
+ */
+export async function downloadRawEncrypted(cid: string): Promise<ArrayBuffer> {
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE_URL}/upload/download-raw/${cid}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to download encrypted file');
+    }
+
+    return response.arrayBuffer();
+}
+
+/**
+ * Get file metadata by CID
+ */
+export async function getFileMetadata(cid: string): Promise<FileRecord> {
+    return apiRequest(`/upload/metadata/${cid}`);
+}
+
+/**
+ * Update file display name or category
+ */
+export async function updateFileMetadata(
+    fileId: number,
+    data: { display_name?: string; category?: string }
+): Promise<{ message: string }> {
+    return apiRequest(`/upload/metadata/${fileId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+// =============================================================================
+// Access Request API
+// =============================================================================
+
+/**
+ * Request access to a file by CID
+ */
+export async function requestAccess(
+    cid: string,
+    requesterPubkey: string,
+    purpose: string
+): Promise<{ request_id: number; status: string }> {
+    return apiRequest('/access/request-access', {
+        method: 'POST',
+        body: JSON.stringify({
+            cid,
+            requester_pubkey: requesterPubkey,
+            purpose,
+        }),
+    });
+}
+
+/**
+ * Approve an access request (file owner only)
+ */
+export async function approveAccess(
+    requestId: number,
+    expirySeconds?: number,
+    kfragHex?: string,
+    verifyingKeyHex?: string
+): Promise<{ granted: boolean; tx_hash?: string; etherscan_url?: string }> {
+    return apiRequest('/access/approve-access', {
+        method: 'POST',
+        body: JSON.stringify({
+            request_id: requestId,
+            expiry_seconds: expirySeconds,
+            kfrag_hex: kfragHex,
+            verifying_key_hex: verifyingKeyHex,
+        }),
+    });
+}
+
+/**
+ * Deny an access request (file owner only)
+ */
+export async function denyAccess(requestId: number): Promise<{ message: string }> {
+    return apiRequest(`/access/deny-access/${requestId}`, {
+        method: 'POST',
+    });
+}
+
+/**
+ * Redeem approved access (get re-encrypted capsule)
+ */
+export async function redeemAccess(
+    cid: string,
+    requesterPubkey?: string
+): Promise<RedeemAccessResponse> {
+    return apiRequest('/access/redeem', {
+        method: 'POST',
+        body: JSON.stringify({
+            cid,
+            requester_pubkey: requesterPubkey,
+        }),
+    });
+}
+
+/**
+ * Get pending access requests for the current user's files
+ */
+export async function getPendingRequests(): Promise<{
+    requests: AccessRequest[];
+    count: number;
+}> {
+    return apiRequest('/access/pending-requests');
+}
+
+/**
+ * Get approved grants for the current user's files
+ */
+export async function getApprovedGrants(): Promise<{
+    grants: ApprovedGrant[];
+    count: number;
+}> {
+    return apiRequest('/access/my-grants');
+}
+
+// =============================================================================
+// Grant API
+// =============================================================================
+
+/**
+ * Create a new grant (grant access to a file)
+ */
+export async function createGrant(
+    granteeId: number,
+    fileId: number,
+    expirySeconds?: number
+): Promise<{
+    grant_id: number;
+    grantee_id: number;
+    reencryption_key: string;
+    message: string;
+}> {
+    return apiRequest('/grant/create', {
+        method: 'POST',
+        body: JSON.stringify({
+            granter_id: 0, // Will be extracted from JWT
+            grantee_id: granteeId,
+            file_id: fileId,
+            expires_at: expirySeconds
+                ? new Date(Date.now() + expirySeconds * 1000).toISOString()
+                : undefined,
+        }),
+    });
+}
+
+/**
+ * Create grant using grantee's UUID (preferred)
+ */
+export async function createGrantByUuid(
+    granteeUuid: string,
+    fileId: number,
+    expirySeconds?: number
+): Promise<{
+    grant_id: number;
+    grantee_id: number;
+    grantee_uuid: string;
+    reencryption_key: string;
+    message: string;
+}> {
+    return apiRequest('/grant/create', {
+        method: 'POST',
+        body: JSON.stringify({
+            granter_id: 0, // Will be extracted from JWT
+            grantee_uuid: granteeUuid,
+            file_id: fileId,
+            expires_at: expirySeconds
+                ? new Date(Date.now() + expirySeconds * 1000).toISOString()
+                : undefined,
+        }),
+    });
+}
+
+/**
+ * Revoke a grant
+ */
+export async function revokeGrant(
+    grantId: number,
+    emitOnchain: boolean = false
+): Promise<{
+    grant_id: number;
+    status: string;
+    tx_hash?: string;
+    message: string;
+}> {
+    return apiRequest('/grant/revoke', {
+        method: 'POST',
+        body: JSON.stringify({
+            grant_id: grantId,
+            granter_id: 0, // Will be verified from JWT
+            emit_onchain: emitOnchain,
+        }),
+    });
+}
+
+/**
+ * Redeem a grant (get re-encrypted capsule)
+ */
+export async function redeemGrant(
+    grantId: number,
+    capsule: string
+): Promise<{
+    cfrag: string;
+    capsule: string;
+    delegating_pk: string;
+    message: string;
+}> {
+    return apiRequest('/grant/redeem', {
+        method: 'POST',
+        body: JSON.stringify({
+            grant_id: grantId,
+            capsule,
+        }),
+    });
+}
+
+/**
+ * List grants created by a user
+ */
+export async function listGrants(userId: number): Promise<{ grants: Grant[]; count: number }> {
+    return apiRequest(`/grant/list/${userId}`);
+}
+
+/**
+ * List grants received by a user
+ */
+export async function listGrantsForGrantee(
+    granteeId: number
+): Promise<{ grants: Grant[]; count: number }> {
+    return apiRequest(`/grant/for-grantee/${granteeId}`);
+}
+
+// =============================================================================
+// Hospital Access API
+// =============================================================================
+
+/**
+ * List available hospitals
+ */
+export async function listHospitals(): Promise<{ hospitals: HospitalInfo[]; count: number }> {
+    return apiRequest('/patients/hospitals');
+}
+
+/**
+ * Grant a hospital access to patient's records
+ */
+export async function grantHospitalAccess(
+    hospitalId: number,
+    expirySeconds?: number
+): Promise<{ message: string; tx_hash?: string }> {
+    return apiRequest('/patients/grant-hospital-access', {
+        method: 'POST',
+        body: JSON.stringify({
+            hospital_id: hospitalId,
+            expiry_seconds: expirySeconds,
+        }),
+    });
+}
+
+/**
+ * Revoke hospital's access to patient's records
+ */
+export async function revokeHospitalAccess(
+    hospitalId: number,
+    emitOnchain: boolean = false
+): Promise<{ message: string; tx_hash?: string }> {
+    return apiRequest('/patients/revoke-hospital-access', {
+        method: 'POST',
+        body: JSON.stringify({
+            hospital_id: hospitalId,
+            emit_onchain: emitOnchain,
+        }),
+    });
+}
+
+/**
+ * Check if a hospital has access
+ */
+export async function checkHospitalAccess(
+    hospitalId: number
+): Promise<{ has_access: boolean; expires_at?: string }> {
+    return apiRequest(`/patients/check-hospital-access/${hospitalId}`);
+}
+
+/**
+ * Get list of hospitals with their access status for current patient
+ */
+export async function getHospitalAccessList(): Promise<{
+    hospitals: HospitalAccess[];
+    count: number;
+}> {
+    return apiRequest('/patients/hospital-access-list');
+}
+
+// =============================================================================
+// Hospital Patient Management API
+// =============================================================================
+
+/**
+ * Get hospital's patients (hospital only)
+ */
+export async function getHospitalPatients(): Promise<{
+    patients: HospitalPatient[];
+    count: number;
+}> {
+    return apiRequest('/patients/hospital-patients');
+}
+
+/**
+ * Get pending patient requests for a hospital
+ */
+export async function getPendingHospitalRequests(): Promise<{
+    requests: PendingHospitalRequest[];
+    count: number;
+}> {
+    return apiRequest('/patients/pending-requests');
+}
+
+/**
+ * Approve a patient's request to link with hospital
+ */
+export async function approveHospitalRequest(
+    requestId: number
+): Promise<{ message: string; tx_hash?: string }> {
+    return apiRequest(`/patients/approve-request/${requestId}`, {
+        method: 'POST',
+    });
+}
+
+/**
+ * Deny a patient's request
+ */
+export async function denyHospitalRequest(requestId: number): Promise<{ message: string }> {
+    return apiRequest(`/patients/deny-request/${requestId}`, {
+        method: 'POST',
+    });
+}
+
+/**
+ * Patient requests access to a hospital
+ */
+export async function requestHospitalLink(hospitalId: number): Promise<{
+    request_id: number;
+    status: string;
+}> {
+    return apiRequest('/patients/request-hospital-link', {
+        method: 'POST',
+        body: JSON.stringify({ hospital_id: hospitalId }),
+    });
+}
+
+// =============================================================================
+// Revocation & CEK Rotation API
+// =============================================================================
+
+/**
+ * Initiate access revocation
+ */
+export async function revokeAccess(grantId: number): Promise<{
+    message: string;
+    tx_hash?: string;
+}> {
+    return apiRequest('/revoke/initiate', {
+        method: 'POST',
+        body: JSON.stringify({ grant_id: grantId }),
+    });
+}
+
+/**
+ * Complete CEK rotation after re-encrypting file
+ */
+export async function completeRotation(
+    fileId: number,
+    newCid: string,
+    newCapsule: string,
+    newEncryptedCek: string
+): Promise<{
+    message: string;
+    new_cid: string;
+    tx_hash?: string;
+}> {
+    return apiRequest('/revoke/complete-rotation', {
+        method: 'POST',
+        body: JSON.stringify({
+            file_id: fileId,
+            new_cid: newCid,
+            new_capsule: newCapsule,
+            new_encrypted_cek: newEncryptedCek,
+        }),
+    });
+}
+
+/**
+ * Server-assisted revocation (for demo purposes)
+ */
+export async function serverAssistedRevocation(
+    fileId: number
+): Promise<{
+    message: string;
+    new_cid: string;
+    tx_hash?: string;
+}> {
+    return apiRequest('/revoke/server-assisted', {
+        method: 'POST',
+        body: JSON.stringify({ file_id: fileId }),
+    });
+}
+
+// =============================================================================
+// Audit Log API
+// =============================================================================
+
+/**
+ * Get audit log for a patient
+ */
+export async function getAuditLog(
+    patientId: number,
+    limit?: number
+): Promise<{ logs: AuditLogEntry[]; count: number }> {
+    const params = limit ? `?limit=${limit}` : '';
+    return apiRequest(`/audit/logs/${patientId}${params}`);
+}
+
+/**
+ * Get combined audit log (database + blockchain)
+ */
+export async function getCombinedAuditLog(
+    patientId: number
+): Promise<{ logs: AuditLogEntry[]; count: number }> {
+    return apiRequest(`/audit/combined/${patientId}`);
+}
+
+// =============================================================================
+// KFrag Generation API (Server-side for compatibility)
+// =============================================================================
+
+/**
+ * Generate kfrag on server using patient's secret key bytes
+ * This is used because @nucypher/umbral-pre (WASM) and pyumbral have
+ * incompatible kfrag serialization formats.
+ */
+export async function generateKfragServerSide(
+    secretKeyBytesHex: string,
+    receivingPubkeyHex: string,
+    signingSecretKeyHex?: string
+): Promise<{
+    kfrag_hex: string;
+    verifying_key_hex: string;
+}> {
+    return apiRequest('/grant/generate-kfrag', {
+        method: 'POST',
+        body: JSON.stringify({
+            delegating_sk_bytes_hex: secretKeyBytesHex,
+            receiving_pk_hex: receivingPubkeyHex,
+            signing_sk_bytes_hex: signingSecretKeyHex,
+        }),
+    });
+}
+
+// =============================================================================
+// Hospital File Decryption API
+// =============================================================================
+
+/**
+ * Decrypt file for hospital (server-assisted decryption)
+ * Hospital sends their secret key bytes to server for decryption
+ */
+export async function decryptFileForHospital(
+    fileId: number,
+    hospitalSecretKeyHex: string
+): Promise<DecryptedFileResponse> {
+    try {
+        const response = await apiRequest<{
+            filename: string;
+            content_base64: string;
+            content_type: string;
+            size: number;
+        }>("/access/decrypt-for-hospital", {
+            method: "POST",
+            body: JSON.stringify({
+                file_id: fileId,
+                hospital_sk_bytes_hex: hospitalSecretKeyHex,
+            }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : "Decryption failed" };
+    }
+}
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
+/**
+ * Check if user is authenticated
+ */
+export function isAuthenticated(): boolean {
+    return getAuthToken() !== null;
+}
+
+/**
+ * Get stored user info from localStorage
+ */
+export function getStoredUser(): Partial<User> | null {
+    if (typeof window === 'undefined') return null;
+    const stored = localStorage.getItem('user_info');
+    return stored ? JSON.parse(stored) : null;
+}
+
+/**
+ * Store user info in localStorage
+ */
+export function setStoredUser(user: Partial<User>): void {
+    if (typeof window !== 'undefined') {
+        localStorage.setItem('user_info', JSON.stringify(user));
+    }
+}
+
+/**
+ * Clear all stored auth data
+ */
+export function clearStoredAuth(): void {
+    clearAuthToken();
+    if (typeof window !== 'undefined') {
+        localStorage.removeItem('user_info');
+    }
+}
+
+// =============================================================================
+// Additional Auth Functions (V2)
+// =============================================================================
+
+/**
+ * Register a new user V2 (patient or hospital)
+ */
+export async function registerV2(data: RegisterRequest): Promise<RegisterResponse> {
+    return apiRequest('/auth/register-v2', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+/**
+ * Login V2 and get JWT token
+ */
+export async function loginV2(username: string, password: string): Promise<LoginResponse> {
+    const response = await apiRequest<LoginResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+    });
+    setAuthToken(response.access_token);
+    return response;
+}
+
+/**
+ * Get current authenticated user
+ */
+export async function getCurrentUser(): Promise<User> {
+    return apiRequest('/auth/me');
+}
+
+/**
+ * Validate an invite token
+ */
+export async function validateInviteToken(token: string): Promise<{ valid: boolean; hospital_name?: string }> {
+    return apiRequest(`/auth/validate-invite/\${token}`);
+}
+
+/**
+ * Generate a public invite (hospital only)
+ */
+export async function generatePublicInvite(): Promise<{ invite_code: string; expires_at: string }> {
+    return apiRequest('/auth/create-invite', { method: 'POST' });
+}
+
+/**
+ * Update user's public key
+ */
+export async function updatePublicKey(publicKey: string): Promise<{ message: string }> {
+    return apiRequest('/auth/update-public-key', {
+        method: 'POST',
+        body: JSON.stringify({ public_key: publicKey }),
+    });
+}
+
+// =============================================================================
+// Profile Functions
+// =============================================================================
+
+/**
+ * Get current user's profile (patient or hospital)
+ */
+export async function getMyProfile(): Promise<PatientProfile | HospitalProfile> {
+    return apiRequest('/auth/my-profile');
+}
+
+/**
+ * Update hospital profile 
+ */
+export async function updateHospitalProfile(
+    hospitalId: number,
+    data: Partial<{
+        name: string;
+        address: string;
+        contact_email: string;
+        contact_phone: string;
+    }>
+): Promise<{ message: string }> {
+    return apiRequest(`/hospitals/profile/\${hospitalId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+// =============================================================================
+// Hospital Access Request Functions
+// =============================================================================
+
+export interface HospitalAccessRequestStatus {
+    id: number;
+    hospital_id: number;
+    hospital_name: string;
+    patient_id: number;
+    patient_name: string;
+    status: 'pending' | 'approved' | 'denied' | 'expired';
+    purpose?: string;
+    created_at: string;
+    expires_at?: string;
+}
+
+/**
+ * Request patient access (hospital side)
+ */
+export async function requestPatientAccess(
+    patientIdentifier: string,
+    purpose?: string
+): Promise<{ request_id: number; status: string }> {
+    return apiRequest('/access/request-patient-access', {
+        method: 'POST',
+        body: JSON.stringify({ patient_identifier: patientIdentifier, purpose }),
+    });
+}
+
+/**
+ * Get hospital's access requests
+ */
+export async function getHospitalAccessRequests(): Promise<{
+    requests: HospitalAccessRequestStatus[];
+    count: number;
+}> {
+    return apiRequest('/access/hospital-requests');
+}
+
+/**
+ * Withdraw access request (hospital side)
+ */
+export async function hospitalWithdrawAccess(requestId: number): Promise<{ message: string }> {
+    return apiRequest(`/access/withdraw-request/\${requestId}`, { method: 'POST' });
+}
+
+/**
+ * Get patient's hospitals list
+ */
+export async function getPatientHospitals(): Promise<{
+    hospitals: HospitalAccess[];
+    count: number;
+}> {
+    return apiRequest('/patients/my-hospitals');
+}
+
+/**
+ * Get patient's access history
+ */
+export async function getPatientAccessHistory(): Promise<{
+    history: HospitalAccessRequestStatus[];
+    count: number;
+}> {
+    return apiRequest('/patients/access-history');
+}
+
+/**
+ * Get patient's pending requests from hospitals
+ */
+export async function getPatientPendingRequests(): Promise<{
+    requests: PendingHospitalRequest[];
+    count: number;
+}> {
+    return apiRequest('/patients/pending-hospital-requests');
+}
+
+/**
+ * Get hospital's public key for a request
+ */
+export async function getHospitalPublicKeyForRequest(requestId: number): Promise<{ public_key: string }> {
+    return apiRequest(`/access/hospital-pubkey/\${requestId}`);
+}
+
+// =============================================================================
+// Patient-to-Patient Sharing
+// =============================================================================
+
+export interface PatientGrantEntry {
+    id: number;
+    grantee_id: number;
+    grantee_name: string;
+    grantee_uuid: string;
+    file_id: number;
+    filename: string;
+    cid: string;
+    status: 'active' | 'revoked' | 'expired';
+    created_at: string;
+    expires_at?: string;
+}
+
+export interface PatientAccessEntry {
+    id: number;
+    granter_id: number;
+    granter_name: string;
+    file_id: number;
+    filename: string;
+    cid: string;
+    status: 'active' | 'revoked' | 'expired';
+    created_at: string;
+    expires_at?: string;
+}
+
+/**
+ * Get files I've shared with other patients
+ */
+export async function getMySharedFiles(): Promise<{
+    shares: PatientGrantEntry[];
+    count: number;
+}> {
+    return apiRequest('/sharing/my-shares');
+}
+
+/**
+ * Get files shared with me by other patients
+ */
+export async function getFilesSharedWithMe(): Promise<{
+    shares: PatientAccessEntry[];
+    count: number;
+}> {
+    return apiRequest('/sharing/shared-with-me');
+}
+
+/**
+ * Share file(s) with another patient
+ */
+export async function shareFilesWithPatient(
+    patientUuid: string,
+    fileIds: number[],
+    expirySeconds?: number
+): Promise<{ grant_ids: number[]; message: string }> {
+    return apiRequest('/sharing/share', {
+        method: 'POST',
+        body: JSON.stringify({
+            grantee_uuid: patientUuid,
+            file_ids: fileIds,
+            expiry_seconds: expirySeconds,
+        }),
+    });
+}
+
+/**
+ * Revoke a patient share
+ */
+export async function revokePatientShare(grantId: number): Promise<{ message: string }> {
+    return apiRequest(`/sharing/revoke/\${grantId}`, { method: 'POST' });
+}
+
+/**
+ * Bulk revoke patient shares
+ */
+export async function bulkRevokePatientShares(grantIds: number[]): Promise<{ message: string; revoked_count: number }> {
+    return apiRequest('/sharing/bulk-revoke', {
+        method: 'POST',
+        body: JSON.stringify({ grant_ids: grantIds }),
+    });
+}
+
+/**
+ * Get a patient's public key by UUID
+ */
+export async function getPatientPublicKey(patientUuid: string): Promise<{ public_key: string }> {
+    return apiRequest(`/patients/public-key/\${patientUuid}`);
+}
+
+/**
+ * Decrypt a shared file (server-side)
+ */
+export async function decryptSharedFile(
+    grantId: number,
+    secretKeyHex: string
+): Promise<{
+    data?: { filename: string; content_base64: string; content_type: string; size: number };
+    error?: string;
+}> {
+    return apiRequest('/sharing/decrypt', {
+        method: 'POST',
+        body: JSON.stringify({ grant_id: grantId, secret_key_hex: secretKeyHex }),
+    });
+}
+
+// =============================================================================
+// File Operations
+// =============================================================================
+
+/**
+ * List files for a user
+ */
+export async function listFiles(userId?: number): Promise<{ files: FileRecord[]; count: number }> {
+    const endpoint = userId ? `/files/list/\${userId}` : '/files/my-files';
+    return apiRequest(endpoint);
+}
+
+/**
+ * Rename a file
+ */
+export async function renameFile(fileId: number, newName: string): Promise<{ message: string }> {
+    return apiRequest(`/files/rename/\${fileId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: newName }),
+    });
+}
+
+/**
+ * Get hospital patient files
+ */
+export async function getHospitalPatientFiles(patientId: number): Promise<{
+    files: FileRecord[];
+    count: number;
+}> {
+    return apiRequest(`/access/hospital-patient-files/\${patientId}`);
+}
+
+// =============================================================================
+// Audit Functions
+// =============================================================================
+
+export interface CategorizedAuditResponse {
+    uploads: AuditLogEntry[];
+    grants: AuditLogEntry[];
+    accesses: AuditLogEntry[];
+    revocations: AuditLogEntry[];
+    rotations: AuditLogEntry[];
+    total: number;
+}
+
+/**
+ * Get audit logs for current user
+ */
+export async function getMyAuditLogs(limit?: number): Promise<CategorizedAuditResponse> {
+    const params = limit ? `?limit=\${limit}` : '';
+    return apiRequest(`/audit/my-logs\${params}`);
+}
+
+/**
+ * Get audit logs (alias)
+ */
+export async function getAuditLogs(
+    patientId?: number,
+    limit?: number
+): Promise<{ logs: AuditLogEntry[]; count: number }> {
+    if (patientId) {
+        return getAuditLog(patientId, limit);
+    }
+    const params = limit ? `?limit=\${limit}` : '';
+    return apiRequest(`/audit/logs\${params}`);
+}
+
+// =============================================================================
+// Revocation / Rotation
+// =============================================================================
+
+/**
+ * Prepare rotation - get file data for client-side re-encryption
+ */
+export async function prepareRotation(fileId: number): Promise<{
+    cid: string;
+    capsule: string;
+    encrypted_cek: string;
+    filename: string;
+}> {
+    return apiRequest(`/revoke/prepare/\${fileId}`);
+}
+
+// =============================================================================
+// Hospital Invite Token Functions
+// =============================================================================
+
+/**
+ * Generate a hospital invite token
+ */
+export async function generateHospitalInvite(expiresSeconds?: number): Promise<{
+    data?: { token: string; expires_at: string };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{ token: string; expires_at: string }>('/auth/create-invite', {
+            method: 'POST',
+            body: JSON.stringify({ expires_seconds: expiresSeconds }),
+        });
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to generate invite' };
+    }
+}
+
+/**
+ * List hospital invite tokens
+ */
+export async function listHospitalInviteTokens(): Promise<{
+    data?: {
+        tokens: Array<{
+            token: string;
+            created_at: string;
+            expires_at: string | null;
+            used: boolean;
+            used_at: string | null;
+            expired: boolean;
+        }>;
+    };
+    error?: string;
+}> {
+    try {
+        const response = await apiRequest<{
+            tokens: Array<{
+                token: string;
+                created_at: string;
+                expires_at: string | null;
+                used: boolean;
+                used_at: string | null;
+                expired: boolean;
+            }>;
+        }>('/auth/list-invites');
+        return { data: response };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Failed to list invites' };
+    }
+}

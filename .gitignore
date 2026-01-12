@@ -17,6 +17,9 @@ frontend/.next/
 frontend/node_modules/
 frontend/out/
 
+# Build outputs
+.turbo/
+
 # =============================================================================
 # Python / Backend
 # =============================================================================
@@ -31,8 +34,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: Only ignore Python lib directories, NOT frontend/src/lib/
+/lib/
+/lib64/
+backend/lib/
+backend/lib64/
 parts/
 sdist/
 var/
@@ -62,8 +68,8 @@ ENV/
 backend/keys/*.bin
 backend/keys/*.pem
 backend/keys/*.key
-*.bin
-!requirements.txt
+# NOTE: Do NOT use blanket *.bin - it would ignore legitimate binaries
+# Only ignore key files in specific locations
 
 # Seed data (may contain sensitive info)
 backend/seed_output.json
@@ -95,3 +101,10 @@ logs/
 # =============================================================================
 .DS_Store
 Thumbs.db
+
+# =============================================================================
+# Misc Build Artifacts
+# =============================================================================
+*.tsbuildinfo
+next-env.d.ts
+paperfolio-portfolio-template
